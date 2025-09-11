@@ -26,6 +26,7 @@ dev
 	tinyfs
 #	mouse # Breaks on Linux/amd64
 	dbg	x86break
+	sd
 ip
 	tcp
 	udp
@@ -89,7 +90,6 @@ port
 	allocb
 	chan
 	dev
-	devsd
 	dial
 	dis
 	discall
