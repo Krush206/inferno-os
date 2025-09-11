@@ -1,0 +1,11 @@
+#!/dis/sh
+# Connect to public grid chat
+load std
+
+cat /n/chat/chat &
+echo JOIN $user from Purgatorio! >>/n/chat/chat
+# echo -n '> ' >[1=2]
+getlines{
+	echo $user → $line
+#	echo -n '> ' >[1=2]
+}>>/n/chat/chat

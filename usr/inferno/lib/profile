@@ -1,0 +1,12 @@
+# Personal sh intialisation
+
+memfs
+
+# Set up environment
+bind -b $home/dis /dis
+bind -b $home/module /module
+
+# Networking
+ndb/cs
+ndb/dns
+
