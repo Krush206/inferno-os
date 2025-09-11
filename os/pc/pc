@@ -115,8 +115,13 @@ root
 	/fd	/
 	/n	/
 	/n/remote	/
+	/n/cd	/
+	/n/disk	/
+	/n/dos	/
+	/n/kfs	/
 	/net	/
 	/nvfs	/
+	/install.sh
 	/osinit.dis
 	/prog	/
 	/chan	/
