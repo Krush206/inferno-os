@@ -62,6 +62,7 @@ misc
 	vgamach64xx
 	cga
 	uarti8250
+	sdata sdscsi
 
 mod
 	sys
@@ -71,8 +72,7 @@ mod
 	math
 
 init
-#	shell
-	wminit
+	shell
 
 code
 	int kernel_pool_pcnt = 10;
@@ -89,6 +89,7 @@ port
 	allocb
 	chan
 	dev
+	devsd
 	dial
 	dis
 	discall
@@ -141,3 +142,79 @@ root
 	/dis/lib/ssl.dis
 	/dis/lib/arg.dis
 	/dis/lib/filepat.dis
+	/dis/lib/env.dis
+	/dis/lib/dial.dis
+	/dis/lockfs.dis
+	/dis/ls.dis
+	/dis/dossrv.dis
+	/dis/pwd.dis
+	/dis/mount.dis
+	/dis/tiny/sh.dis
+	/dis/tiny/rm.dis
+	/dis/mv.dis
+	/dis/wm/sh.dis
+	/dis/wm/mash.dis
+	/dis/wm/wish.dis
+	/dis/charon/chutils.dis
+	/dis/mpc/qflash.dis
+	/dis/disk/calc.tab.dis
+	/dis/disk/pedit.dis
+	/dis/disk/mkfs.dis
+	/dis/disk/kfs.dis
+	/dis/disk/fdisk.dis
+	/dis/disk/kfscmd.dis
+	/dis/disk/mbr.dis
+	/dis/disk/format.dis
+	/dis/disk/prep.dis
+	/dis/mpeg/vlc.dis
+	/dis/cd.dis
+	/dis/tclsh.dis
+	/dis/sed.dis
+	/dis/bind.dis
+	/dis/svc/webget/wgutils.dis
+	/dis/svc/httpd/echo.dis
+	/dis/fs/ls.dis
+	/dis/ndb/mkhash.dis
+	/dis/ip/dhcp.dis
+	/dis/cat.dis
+	/dis/sh.dis
+	/dis/lib/tcl_symhash.dis
+	/dis/lib/styxflush.dis
+	/dis/lib/styxconv/ostyx.dis
+	/dis/lib/auth.dis
+	/dis/lib/tcl_modhash.dis
+	/dis/lib/bufio.dis
+	/dis/lib/readdir.dis
+	/dis/lib/tcl_utils.dis
+	/dis/lib/disks.dis
+	/dis/lib/workdir.dis
+	/dis/lib/tcl_inthash.dis
+	/dis/lib/daytime.dis
+	/dis/lib/tcl_calc.dis
+	/dis/lib/string.dis
+	/dis/lib/format.dis
+	/dis/lib/oldauth.dis
+	/dis/lib/hash.dis
+	/dis/lib/tcl_string.dis
+	/dis/lib/arg.dis
+	/dis/lib/tcl_strhash.dis
+	/dis/lib/attrhash.dis
+	/dis/lib/regex.dis
+	/dis/lib/styx.dis
+	/dis/lib/ssl.dis
+	/dis/lib/filepat.dis
+	/dis/unmount.dis
+	/dis/mash.dis
+	/dis/wish.dis
+	/dis/fcp.dis
+	/dis/9660srv.dis
+	/dis/cp.dis
+	/dis/calc.dis
+	/dis/echo.dis
+	/dis/sh/std.dis
+	/dis/sh/string.dis
+	/dis/sh/sh.dis
+	/dis/sh/arg.dis
+	/dis/sh/regex.dis
+	/dis/sh/echo.dis
+	/dis/rm.dis
