@@ -33,6 +33,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	sys->bind("#W","/dev",sys->MAFTER);	# Flash
 #	sys->bind("#O", "/dev", sys->MAFTER);	# Modem
 #	sys->bind("#T","/dev",sys->MAFTER);	# Touchscreen
+	sys->bind("#S", "/dev", sys->MAFTER);
 
 	srv();
 
