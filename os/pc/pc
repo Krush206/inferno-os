@@ -12,7 +12,7 @@ dev
 	ssl
 	cap
 
-	draw	screen vga vgax cga
+	draw	screen vga vgax cga vgabase
 	pointer
 	vga
 
@@ -64,6 +64,7 @@ misc
 	cga
 	uarti8250
 	sdata sdscsi
+	vgabase
 
 mod
 	sys
