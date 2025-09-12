@@ -206,3 +206,11 @@ root
 	/dis/wm/mash.dis
 	/dis/wm/sh.dis
 	/dis/wm/wish.dis
+	/init.sh
+	/dis/tarfs.dis
+	/dis/lib/styxservers.dis
+	/tmp	/
+	/mnt	/
+	/lib	/
+	/fonts	/
+	/icons	/
