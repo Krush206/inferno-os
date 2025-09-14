@@ -34,6 +34,7 @@ init(nil: ref Draw->Context, nil: list of string)
 #	sys->bind("#O", "/dev", sys->MAFTER);	# Modem
 #	sys->bind("#T","/dev",sys->MAFTER);	# Touchscreen
 	sys->bind("#S", "/dev", sys->MAFTER);
+	sys->bind("#m", "/dev", sys->MAFTER);
 
 	srv();
 
