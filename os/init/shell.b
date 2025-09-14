@@ -37,6 +37,8 @@ init(nil: ref Draw->Context, nil: list of string)
 
 	srv();
 
+	init := load Sh "/dis/sh.dis";
+	init->init(nil, "/dis/sh.dis" :: "/init.sh" :: nil);
 	spawn shell->init(nil, nil);
 }
 
