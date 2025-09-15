@@ -1965,6 +1965,24 @@ drawlsetrefresh(ulong qidpath, int id, void *reffn, void *refx)
 	return memlsetrefresh(i, reffn, refx);
 }
 
+void
+drawqlock(void)
+{
+	qlock(&sdraw);
+}
+
+void
+drawqunlock(void)
+{
+	qunlock(&sdraw);
+}
+
+int
+candrawqlock(void)
+{
+	return canqlock(&sdraw);
+}
+
 Dev drawdevtab = {
 	'i',
 	"draw",

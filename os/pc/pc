@@ -64,7 +64,7 @@ misc
 	cga
 	uarti8250
 	sdata sdscsi
-	vgabase
+	vgabase +cur
 
 mod
 	sys
@@ -110,6 +110,7 @@ port
 	sysfile
 	taslock
 	xalloc
+	swcursor
 
 root
 	/env	/

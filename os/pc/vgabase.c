@@ -362,11 +362,12 @@ ptrupdate(void)
 static void
 basegcenable(VGAscr *scr)
 {
-	static int enabled = 0;
+	static int enabled;
 
 	if(enabled == 0){
+		enabled = 1;
 		basegcload(scr, &arrow);
-		addclock0link(ptrupdate, 50);
+		addclock0link(ptrupdate, 100);
 	}
 	else
 		print("attempt to enable cursor multiple times\n");
@@ -392,25 +393,44 @@ basegcmove(VGAscr *scr, Point p)
 }
 
 VGAdev vgabasedev = {
-	"basevga",
-
+	.name = "basevga",
 	.enable = basevgaenable,
-	0,
-	0,
-	0,
 	.drawinit = basevgainit,
-	0,
-	0,
-	0,
 	.flush = basevgaflush,
 };
 
-VGAcur vgabasecur = {
-	"basevgagc",
+static void
+swenable(VGAscr*)
+{
+	swcursorinit();
+	swcursorload(&cursor);
+}
 
-	.enable = basegcenable,
-	0,
-	.load = basegcload,
-	.move = basegcmove,
-	0,
+static void
+swdisable(VGAscr*)
+{
+	swcursorhide();
+}
+
+static void
+swload(VGAscr*, Cursor *curs)
+{
+	swcursorload(curs);
+}
+
+static int
+swmove(VGAscr*, Point)
+{
+	swcursorhide();
+	swcursordraw();
+	return 0;
+}
+
+VGAcur vgabasecur =
+{
+	"basevgagc",
+	swenable,
+	swdisable,
+	swload,
+	swmove,
 };

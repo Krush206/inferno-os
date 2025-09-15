@@ -163,6 +163,9 @@ extern ulong	blanktime;
 extern void	setscreenimageclipr(Rectangle);
 extern void	drawflush(void);
 extern int drawidletime(void);
+extern void	drawqlock(void);
+extern void	drawqunlock(void);
+extern int	candrawqlock(void);
 
 /* vga.c */
 extern void	vgascreenwin(VGAscr*);
@@ -171,3 +174,9 @@ extern ulong	vgapcilinear(VGAscr*, int*, int*, int, int);
 
 extern void	drawblankscreen(int);
 extern void	vgablank(VGAscr*, int);
+
+/* swcursor.c */
+extern void	swcursorhide(void);
+extern void	swcursordraw(void);
+extern void	swcursorinit(void);
+extern void	swcursorload(Cursor*);
