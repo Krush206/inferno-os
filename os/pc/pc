@@ -64,7 +64,8 @@ misc
 	cga
 	uarti8250
 	sdata sdscsi
-	vgabase +cur
+	vgabase
+	vgasoft =cur
 
 mod
 	sys

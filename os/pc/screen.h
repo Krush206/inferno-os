@@ -176,7 +176,7 @@ extern void	drawblankscreen(int);
 extern void	vgablank(VGAscr*, int);
 
 /* swcursor.c */
-extern void	swcursorhide(void);
-extern void	swcursordraw(void);
+extern void	swcursorhide(int);
+extern void	swcursordraw(Point);
 extern void	swcursorinit(void);
 extern void	swcursorload(Cursor*);

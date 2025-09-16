@@ -315,8 +315,19 @@ cursoron(int dolock)
 }
 
 void
-cursoroff(int)
+cursoroff(int dolock)
 {
+	VGAscr *scr;
+
+	scr = &vgascreen[0];
+	if(scr->cur == nil || scr->cur->disable == nil)
+		return;
+
+	if (dolock)
+		lock(&cursor);
+	scr->cur->disable(scr);
+	if (dolock)
+		unlock(&cursor);
 }
 
 void
@@ -402,9 +413,18 @@ blankscreen(int blank)
 void
 cursorenable(void)
 {
+	VGAscr *scr;
+	
+	scr = &vgascreen[0];
+	if(scr->cur == nil || scr->cur->enable == nil)
+		return;
+	
+	scr->cur->enable(scr);
+	cursoron(1);
 }
 
 void
 cursordisable(void)
 {
+	cursoroff(0);
 }
