@@ -65,7 +65,6 @@ misc
 	uarti8250
 	sdata sdscsi
 	vgabase
-	vgasoft =cur
 
 mod
 	sys
@@ -83,7 +82,7 @@ code
 	int heap_pool_pcnt = 20;
 	int image_pool_pcnt = 40;
 	int cflag=0;
-	int swcursor=0;
+	int swcursor=1;
 	int consoleprint=1;
 
 port

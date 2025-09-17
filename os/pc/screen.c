@@ -298,34 +298,28 @@ setcolor(ulong p, ulong r, ulong g, ulong b)
 int
 cursoron(int dolock)
 {
-	VGAscr *scr;
-	int v;
+	int retry;
 
-	scr = &vgascreen[0];
-	if(scr->cur == nil || scr->cur->move == nil)
-		return 0;
-
-	if(dolock)
+	if (dolock)
 		lock(&cursor);
-	v = scr->cur->move(scr, mousexy());
-	if(dolock)
+	if (candrawqlock()) {
+		retry = 0;
+		swcursorhide();
+		swcursordraw();
+		drawqunlock();
+	} else
+		retry = 1;
+	if (dolock)
 		unlock(&cursor);
-
-	return v;
+	return retry;
 }
 
 void
 cursoroff(int dolock)
 {
-	VGAscr *scr;
-
-	scr = &vgascreen[0];
-	if(scr->cur == nil || scr->cur->disable == nil)
-		return;
-
 	if (dolock)
 		lock(&cursor);
-	scr->cur->disable(scr);
+	swcursorhide();
 	if (dolock)
 		unlock(&cursor);
 }
@@ -333,13 +327,9 @@ cursoroff(int dolock)
 void
 setcursor(Cursor* curs)
 {
-	VGAscr *scr;
-
-	scr = &vgascreen[0];
-	if(scr->cur == nil || scr->cur->load == nil)
-		return;
-
-	scr->cur->load(scr, curs);
+	cursoroff(0);
+	swcursorload(curs);
+	cursoron(0);
 }
 
 int hwaccel = 1;
@@ -413,13 +403,8 @@ blankscreen(int blank)
 void
 cursorenable(void)
 {
-	VGAscr *scr;
-	
-	scr = &vgascreen[0];
-	if(scr->cur == nil || scr->cur->enable == nil)
-		return;
-	
-	scr->cur->enable(scr);
+	if (swcursor)
+		swcursorinit();
 	cursoron(1);
 }
 
