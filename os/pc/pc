@@ -12,9 +12,8 @@ dev
 	ssl
 	cap
 
-	draw	screen vga vgax cga vgabase
-	pointer
-	vga
+	draw	vbescreen
+	pointer ps2mouse
 
 	ip	bootp ip ipv6 ipaux iproute arp netlog ptclbsum386 iprouter plan9 nullmedium pktmedium
 	ether		netif netaux ethermedium
@@ -54,17 +53,13 @@ link
 	ether82557	pci
 	ether83815	pci
 	etherelnk3	pci
-	ps2mouse
+#	ps2mouse
 	ethermedium
 #	pppmedium ppp compress # Breaks on Linux/amd64
 
 misc
-	vgas3	+cur vgasavage
-	vgamach64xx
-	cga
 	uarti8250
 	sdata sdscsi
-	vgabase
 
 mod
 	sys
@@ -216,3 +211,5 @@ root
 	/lib	/
 	/fonts	/
 	/icons	/
+	/usr	/
+	/man	/
