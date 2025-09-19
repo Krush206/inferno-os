@@ -14,7 +14,7 @@
 #include <memdraw.h>
 #include <cursor.h>
 
-#include "screen.h"
+#include "vbescreen.h"
 
 enum {
 	Tabstop	= 4,
