@@ -1,21 +1,38 @@
-# mkconfig - Build configuration
-# ROOT must be set by environment before running mk
 #
-# Platform auto-detection: supports both macOS and Linux ARM64
-# Override SYSHOST in environment if needed
+#	Set the following 4 variables.  The host system is the system where
+#	the software will be built; the target system is where it will run.
+#	They are almost always the same.
 
-SHELLTYPE=sh
+#	On Nt systems, the ROOT path MUST be of the form `drive:/path'
+ROOT=$HOME/src/purgatorio
 
-# Auto-detect host system if not set in environment
-# On macOS: uname -s returns "Darwin", we map to "MacOSX"
-# On Linux: uname -s returns "Linux"
-SYSHOST=`{sh -c 'case $(uname -s) in Darwin) echo MacOSX;; *) uname -s;; esac'}
-SYSTARG=$SYSHOST
-OBJTYPE=`{sh -c 'case $(uname -m) in x86_64) echo amd64;; aarch64|arm64) echo arm64;; *) echo "unsupported architecture: $(uname -m)" >&2; echo amd64;; esac'}
-OBJDIR=$SYSTARG/$OBJTYPE
+#
+#	Specify the flavour of Tk (std for standard builds)
+#
 TKSTYLE=std
 
-# These includes are optional - mk will warn but continue if missing
-# Set ROOT environment variable before running mk to avoid warnings
-<$ROOT/mkfiles/mkhost-$SYSHOST
-<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+# emu target, emu-g is a headless variant. Linux/BSD only (emu, emu-g)
+CONF=emu
+
+#	binary will be placed at $SYSTARG/$OBJTYPE/bin/$CONF
+
+#
+#	Except for building kernels, SYSTARG must always be the same as SYSHOST
+#
+SYSHOST=Linux		# build system OS type (Hp, Inferno, Irix, Linux, MacOSX, Nt, Plan9, Solaris)
+SYSTARG=$SYSHOST	# target system OS type (Hp, Inferno, Irix, Linux, Nt, Plan9, Solaris)
+
+#
+#	specify the architecture of the target system - Plan 9 imports it from the
+#	environment; for other systems it is usually just hard-coded
+#
+#OBJTYPE=386			# target system object type (eg, 386, arm, mips, power, s800, sparc)
+OBJTYPE=386
+
+#
+#	no changes required beyond this point
+#
+OBJDIR=$SYSTARG/$OBJTYPE
+
+<$ROOT/mkfiles/mkhost-$SYSHOST			# variables appropriate for host system
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE	# variables used to build target object type
