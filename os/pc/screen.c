@@ -298,38 +298,37 @@ setcolor(ulong p, ulong r, ulong g, ulong b)
 int
 cursoron(int dolock)
 {
-	int retry;
+	VGAscr *scr;
+	int v;
 
-	if (dolock)
+	scr = &vgascreen[0];
+	if(scr->cur == nil || scr->cur->move == nil)
+		return 0;
+
+	if(dolock)
 		lock(&cursor);
-	if (candrawqlock()) {
-		retry = 0;
-		swcursorhide();
-		swcursordraw();
-		drawqunlock();
-	} else
-		retry = 1;
-	if (dolock)
+	v = scr->cur->move(scr, mousexy());
+	if(dolock)
 		unlock(&cursor);
-	return retry;
+
+	return v;
 }
 
 void
-cursoroff(int dolock)
+cursoroff(int)
 {
-	if (dolock)
-		lock(&cursor);
-	swcursorhide();
-	if (dolock)
-		unlock(&cursor);
 }
 
 void
 setcursor(Cursor* curs)
 {
-	cursoroff(0);
-	swcursorload(curs);
-	cursoron(0);
+	VGAscr *scr;
+
+	scr = &vgascreen[0];
+	if(scr->cur == nil || scr->cur->load == nil)
+		return;
+
+	scr->cur->load(scr, curs);
 }
 
 int hwaccel = 1;
@@ -403,13 +402,9 @@ blankscreen(int blank)
 void
 cursorenable(void)
 {
-	if (swcursor)
-		swcursorinit();
-	cursoron(1);
 }
 
 void
 cursordisable(void)
 {
-	cursoroff(0);
 }

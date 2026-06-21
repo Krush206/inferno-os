@@ -17,7 +17,6 @@
 enum{
 	Qdir,
 	Qpointer,
-	Qpointerctl,
 	Qcursor,
 };
 
@@ -44,7 +43,6 @@ static
 Dirtab pointertab[]={
 	".",			{Qdir, 0, QTDIR},	0,	0555,
 	"pointer",		{Qpointer},	0,	0666,
-	"pointerctl",		{Qpointerctl},	0,	0600,
 	"cursor",		{Qcursor},		0,	0222,
 };
 
@@ -61,9 +59,6 @@ static struct {
 	int	put;
 	int	get;
 } ptrq;
-
-extern void pointerctl(char*);
-extern void pointerstatus(char*, int);
 
 /*
  * called by any source of pointer data
@@ -200,7 +195,7 @@ pointerclose(Chan* c)
 }
 
 static long
-pointerread(Chan* c, void* a, long n, vlong offset)
+pointerread(Chan* c, void* a, long n, vlong)
 {
 	Pointer mt;
 	char tmp[128];
@@ -223,12 +218,6 @@ pointerread(Chan* c, void* a, long n, vlong offset)
 			n = l;
 		memmove(a, tmp, n);
 		break;
-	case Qpointerctl:
-                qlock(&mouse.q);
-                pointerstatus(tmp, sizeof(tmp));
-                qunlock(&mouse.q);
-                n = readstr(offset, a, n, tmp);
-                break;
 	case Qcursor:
 		/* TO DO: interpret data written as Image; give to drawcursor() */
 		break;
@@ -261,21 +250,6 @@ pointerwrite(Chan* c, void* va, long n, vlong)
 		else
 			b = mouse.b;
 		mousetrack(b, x, y, 0);
-		break;
-	case Qpointerctl:
-		if (n >= sizeof(buf))
-	                n = sizeof(buf) - 1;
-	        strncpy(buf, va, n);
-	        buf[n] = 0;
-	
-	        qlock(&mouse.q);
-	        if (waserror()) {
-	                qunlock(&mouse.q);
-	                nexterror();
-	        }
-	        pointerctl(buf);
-	        poperror();
-	        qunlock(&mouse.q);
 		break;
 	default:
 		error(Ebadusefd);

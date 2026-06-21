@@ -12,8 +12,9 @@ dev
 	ssl
 	cap
 
-	draw	vbescreen
-	pointer ps2mouse
+	draw	screen vga vgax cga
+	pointer
+	vga
 
 	ip	bootp ip ipv6 ipaux iproute arp netlog ptclbsum386 iprouter plan9 nullmedium pktmedium
 	ether		netif netaux ethermedium
@@ -25,7 +26,6 @@ dev
 	tinyfs
 #	mouse # Breaks on Linux/amd64
 	dbg	x86break
-	sd
 ip
 	tcp
 	udp
@@ -53,13 +53,15 @@ link
 	ether82557	pci
 	ether83815	pci
 	etherelnk3	pci
-#	ps2mouse
+	ps2mouse
 	ethermedium
 #	pppmedium ppp compress # Breaks on Linux/amd64
 
 misc
+	vgas3	+cur vgasavage
+	vgamach64xx
+	cga
 	uarti8250
-	sdata sdscsi
 
 mod
 	sys
@@ -69,7 +71,8 @@ mod
 	math
 
 init
-	shell
+#	shell
+	wminit
 
 code
 	int kernel_pool_pcnt = 10;
@@ -77,7 +80,7 @@ code
 	int heap_pool_pcnt = 20;
 	int image_pool_pcnt = 40;
 	int cflag=0;
-	int swcursor=1;
+	int swcursor=0;
 	int consoleprint=1;
 
 port
@@ -105,111 +108,36 @@ port
 	sysfile
 	taslock
 	xalloc
-	swcursor
 
 root
+	/chan	/
+	/dev	/
+	/dis
 	/env	/
 	/fd	/
 	/n	/
 	/n/remote	/
-	/n/cd	/
-	/n/disk	/
-	/n/dos	/
-	/n/kfs	/
 	/net	/
 	/nvfs	/
-	/install.sh
-	/osinit.dis
 	/prog	/
-	/chan	/
-	/dev	/
-	/dis
-	/dis/9660srv.dis
-	/dis/bind.dis
-	/dis/calc.dis
-	/dis/cat.dis
-	/dis/cd.dis
-	/dis/charon/chutils.dis
-	/dis/cp.dis
-	/dis/disk/calc.tab.dis
-	/dis/disk/fdisk.dis
-	/dis/disk/format.dis
-	/dis/disk/kfs.dis
-	/dis/disk/kfscmd.dis
-	/dis/disk/mbr.dis
-	/dis/disk/mkfs.dis
-	/dis/disk/pedit.dis
-	/dis/disk/prep.dis
-	/dis/dossrv.dis
-	/dis/echo.dis
-	/dis/fcp.dis
-	/dis/fs/ls.dis
-	/dis/ip/dhcp.dis
 	/dis/lib
-	/dis/lib/arg.dis
-	/dis/lib/attrhash.dis
-	/dis/lib/auth.dis
-	/dis/lib/bufio.dis
-	/dis/lib/daytime.dis
-	/dis/lib/dial.dis
-	/dis/lib/disks.dis
-	/dis/lib/env.dis
-	/dis/lib/filepat.dis
-	/dis/lib/format.dis
-	/dis/lib/hash.dis
-	/dis/lib/oldauth.dis
-	/dis/lib/readdir.dis
-	/dis/lib/regex.dis
-	/dis/lib/ssl.dis
-	/dis/lib/string.dis
-	/dis/lib/styx.dis
-	/dis/lib/styxconv/ostyx.dis
-	/dis/lib/styxflush.dis
-	/dis/lib/tcl_calc.dis
-	/dis/lib/tcl_inthash.dis
-	/dis/lib/tcl_modhash.dis
-	/dis/lib/tcl_strhash.dis
-	/dis/lib/tcl_string.dis
-	/dis/lib/tcl_symhash.dis
-	/dis/lib/tcl_utils.dis
-	/dis/lib/workdir.dis
-	/dis/lockfs.dis
-	/dis/ls.dis
-	/dis/mash.dis
-	/dis/mount.dis
-	/dis/mpc/qflash.dis
-	/dis/mpeg/vlc.dis
-	/dis/mv.dis
-	/dis/ndb/mkhash.dis
-	/dis/pwd.dis
-	/dis/rm.dis
-	/dis/sed.dis
-	/dis/sh.dis
-	/dis/sh/arg.dis
-	/dis/sh/echo.dis
-	/dis/sh/regex.dis
-	/dis/sh/sh.dis
-	/dis/sh/std.dis
-	/dis/sh/string.dis
 	/dis/svc
-	/dis/svc/httpd/echo.dis
-	/dis/svc/webget/wgutils.dis
-	/dis/tclsh.dis
-	/dis/tiny/rm.dis
-	/dis/tiny/sh.dis
-	/dis/unmount.dis
-	/dis/wish.dis
 	/dis/wm
-	/dis/wm/mash.dis
-	/dis/wm/sh.dis
-	/dis/wm/wish.dis
-	/init.sh
-	/dis/tarfs.dis
-	/dis/lib/styxservers.dis
-	/tmp	/
-	/mnt	/
-	/lib	/
-	/fonts	/
-	/icons	/
-	/usr	/
-	/man	/
+	/osinit.dis
+	/dis/sh.dis
+	/dis/ls.dis
+	/dis/cat.dis
+	/dis/bind.dis
+	/dis/mount.dis
+	/dis/pwd.dis
+	/dis/echo.dis
+	/dis/cd.dis
+	/dis/lib/bufio.dis
+	/dis/lib/string.dis
+	/dis/lib/readdir.dis
+	/dis/lib/workdir.dis
+	/dis/lib/daytime.dis
+	/dis/lib/auth.dis
+	/dis/lib/ssl.dis
+	/dis/lib/arg.dis
+	/dis/lib/filepat.dis

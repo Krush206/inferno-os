@@ -33,13 +33,9 @@ init(nil: ref Draw->Context, nil: list of string)
 	sys->bind("#W","/dev",sys->MAFTER);	# Flash
 #	sys->bind("#O", "/dev", sys->MAFTER);	# Modem
 #	sys->bind("#T","/dev",sys->MAFTER);	# Touchscreen
-	sys->bind("#S", "/dev", sys->MAFTER);
-	sys->bind("#m", "/dev", sys->MAFTER);
 
 	srv();
 
-	init := load Sh "/dis/sh.dis";
-	init->init(nil, "/dis/sh.dis" :: "/init.sh" :: nil);
 	spawn shell->init(nil, nil);
 }
 
