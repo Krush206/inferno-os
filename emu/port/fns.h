@@ -20,9 +20,6 @@ Dir*		chandirstat(Chan*);
 void		cinit(void);
 char*	clipread(void);
 int		clipwrite(char*);
-#ifndef PLAN9
-void	(*coherence)(void);
-#endif
 void		copen(Chan*);
 void		cmderror(Cmdbuf*, char*);
 Block*	concatblock(Block*);
@@ -69,11 +66,18 @@ int		emptystr(char*);
 void		emuinit(void*);
 int		eqchan(Chan*, Chan*, int);
 int		eqqid(Qid, Qid);
-void		error(char*);
-void		errorf(char*, ...);
+#ifndef INF_NORETURN
+#  if defined(__GNUC__) || defined(__clang__)
+#    define INF_NORETURN __attribute__((noreturn))
+#  else
+#    define INF_NORETURN	/* kencc and other compilers: no-op */
+#  endif
+#endif
+void		error(char*) INF_NORETURN;
+void		errorf(char*, ...) INF_NORETURN;
 #pragma varargck argpos errorf 1
 void		excinit(void);
-void		exhausted(char*);
+void		exhausted(char*) INF_NORETURN;
 int		export(int, char*, int);
 Chan*	fdtochan(Fgrp*, int, int, int, int);
 int		findmount(Chan**, Mhead**, int, int, Qid);
@@ -93,6 +97,7 @@ int		kannounce(char*, char*);
 int		kdial(char*, char*, char*, int*);
 void		kproc(char*, void (*)(void*), void*, int);
 void	kprocinit(Proc*);
+void	kprocsetup(Proc*);
 int		kfgrpclose(Fgrp*, int);
 void		ksetenv(char*, char*, int);
 void		kstrcpy(char*, char*, int);
@@ -120,8 +125,7 @@ Fgrp*	newfgrp(Fgrp*);
 Mount*	newmount(Mhead*, Chan*, int, char*);
 Pgrp*	newpgrp(void);
 Proc*	newproc(void);
-void		nexterror(void);
-void		nofence(void);
+void		nexterror(void) INF_NORETURN;
 void		notkilled(void);
 int		openmode(ulong);
 void		osblock(void);
@@ -190,6 +194,8 @@ int		readstr(ulong, char*, ulong, char*);
 void		seterror(char*, ...);
 void		setid(char*, int);
 void	setpointer(int, int);
+void	setsoftkbd(int);	/* show/hide the on-screen keyboard (GUI backends) */
+void	setsoftkbd_rect(int x, int y, int w, int h);	/* focused-widget rect, window POINTS; SDL slides to keep it above the kbd */
 char*	skipslash(char*);
 void		srvrtinit(void);
 void		swiproc(Proc*, int);

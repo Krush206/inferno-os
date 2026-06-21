@@ -21,7 +21,7 @@ trans : Translate;
 dict : ref Dict;
 
 NCTimeout : con 100000;		# free NC slot after 100 seconds
-UBufsize : con 40*1024;		# initial buffer size for unknown lengths
+UBufsize : con 128*1024;	# initial buffer size for unknown lengths
 UEBufsize : con 1024;		# initial buffer size for unknown lengths, error responses
 
 botchexception := "EXInternal: ByteSource protocol botch";
@@ -69,13 +69,16 @@ mnames = array[] of {
 	"application/x-unknown",
 	"audio/32kadpcm",
 	"audio/basic",
+	"image/avif",
 	"image/cgm",
 	"image/g3fax",
 	"image/gif",
 	"image/ief",
 	"image/jpeg",
 	"image/png",
+	"image/svg+xml",
 	"image/tiff",
+	"image/webp",
 	"image/x-bit",
 	"image/x-bit2",
 	"image/x-bitmulti",
@@ -159,6 +162,8 @@ hcphrase(code: int) : string
 fileexttable := array[] of { T->StringInt
 	("ai", ApplPostscript),
 	("au", AudioBasic),
+	("avif", ImageAvif),
+	("avifs", ImageAvif),
 # ("bit", ImageXBit),
 	("bit", ImageXInfernoBit),
 	("bit2", ImageXBit2),
@@ -175,10 +180,12 @@ fileexttable := array[] of { T->StringInt
 	("png", ImagePng),
 	("ps", ApplPostscript),
 	("shtml", TextHtml),
+	("svg", ImageSvg),
 	("text", TextPlain),
 	("tif", ImageTiff),
 	("tiff", ImageTiff),
 	("txt", TextPlain),
+	("webp", ImageWebP),
 	("zip", ApplOctets)
 };
 
@@ -201,10 +208,6 @@ init(ch: Charon, c: CharonUtils, argl: list of string, evc: chan of ref E->Event
 		return Url->PATH;
 	U->init();
 
-	DI = load Dial Dial->PATH;
-	if(DI == nil)
-		return Dial->PATH;
-
 	T = load StringIntTab StringIntTab->PATH;
 	if(T == nil)
 		return StringIntTab->PATH;
@@ -220,6 +223,15 @@ init(ch: Charon, c: CharonUtils, argl: list of string, evc: chan of ref E->Event
 	# build directory version if dbg['u'] is set)
 
 	setconfig(argl);
+
+	# Headless mode: force lightweight settings
+	if(config.headless) {
+		config.imagelvl = ImgNone;
+		config.imagecachenum = 0;
+		config.imagecachemem = 0;
+		config.doscripts = 0;
+	}
+
 	dbg = int config.dbg['d'];
 
 	G = load Gui loadpath(Gui->PATH);
@@ -234,8 +246,12 @@ init(ch: Charon, c: CharonUtils, argl: list of string, evc: chan of ref E->Event
 	if(E == nil)
 		return loadpath(Events->PATH);
 
-	J = load Script loadpath(Script->JSCRIPTPATH);
-	# don't report an error loading JavaScript, handled elsewhere
+	# In headless mode, skip Script and Img modules to save memory.
+	# These are only needed for GUI rendering and JavaScript execution.
+	if(!config.headless) {
+		J = load Script loadpath(Script->JSCRIPTPATH);
+		# don't report an error loading JavaScript, handled elsewhere
+	}
 
 	LX = load Lex loadpath(Lex->PATH);
 	if(LX == nil)
@@ -245,9 +261,11 @@ init(ch: Charon, c: CharonUtils, argl: list of string, evc: chan of ref E->Event
 	if(B == nil)
 		return loadpath(Build->PATH);
 
-	I = load Img loadpath(Img->PATH);
-	if(I == nil)
-		return loadpath(Img->PATH);
+	if(!config.headless) {
+		I = load Img loadpath(Img->PATH);
+		if(I == nil)
+			return loadpath(Img->PATH);
+	}
 
 	L = load Layout loadpath(Layout->PATH);
 	if(L == nil)
@@ -267,7 +285,8 @@ init(ch: Charon, c: CharonUtils, argl: list of string, evc: chan of ref E->Event
 	# be inited after that, because it needs G's display to allocate fonts)
 
 	E->init(evc);
-	I->init(me);
+	if(I != nil)
+		I->init(me);
 	err := convcs->init(nil);
 	if (err != nil)
 		return err;
@@ -302,7 +321,8 @@ init(ch: Charon, c: CharonUtils, argl: list of string, evc: chan of ref E->Event
 	gettransport("file");
 
 	progresschan = chan of (int, int, int, string);
-	imcache = ref ImageCache;
+	if(!config.headless)
+		imcache = ref ImageCache;
 	ctype = C->ctype;
 	dbgproto = int config.dbg['p'];
 	ngchan = chan of (int, list of ref ByteSource, ref Netconn, chan of ref ByteSource);
@@ -367,6 +387,66 @@ freebs(bs: ref ByteSource)
 	<-anschan;
 }
 
+# Fetch a URL synchronously and return the response body as a string.
+# Returns nil on error or empty response.
+fetchurl_text(url: ref Parsedurl) : string
+{
+	if(url == nil)
+		return nil;
+	ri := ref ReqInfo(url, HGet, nil, nil, nil);
+	bs := startreq(ri);
+	if(bs.err != "") {
+		freebs(bs);
+		return nil;
+	}
+	# Wait for header
+	waitreq(bs :: nil);
+	if(bs.err != "") {
+		freebs(bs);
+		return nil;
+	}
+	# Handle redirects (up to 5)
+	for(nredir := 0; nredir < 5 && !bs.eof; nredir++) {
+		if(bs.hdr == nil) {
+			waitreq(bs :: nil);
+			if(bs.err != "")
+				break;
+			continue;
+		}
+		(use, nil, nil, newurl) := hdraction(bs, 0, nredir);
+		if(use)
+			break;
+		if(newurl != nil) {
+			freebs(bs);
+			ri = ref ReqInfo(newurl, HGet, nil, nil, nil);
+			bs = startreq(ri);
+			if(bs.err != "") {
+				freebs(bs);
+				return nil;
+			}
+			waitreq(bs :: nil);
+			if(bs.err != "") {
+				freebs(bs);
+				return nil;
+			}
+		} else
+			break;
+	}
+	# Wait for all data
+	while(!bs.eof) {
+		waitreq(bs :: nil);
+		if(bs.err != "") {
+			freebs(bs);
+			return nil;
+		}
+	}
+	result := "";
+	if(bs.edata > 0)
+		result = string bs.data[0:bs.edata];
+	freebs(bs);
+	return result;
+}
+
 abortgo(gopgrp: int)
 {
 	if(int config.dbg['d'])
@@ -396,7 +476,7 @@ netget()
 	msg, n, i: int;
 	bsl : list of ref ByteSource;
 	nc: ref Netconn;
-	waitix := 0;
+
 	c : chan of ref ByteSource;
 	waitpending : list of (list of ref ByteSource, chan of ref ByteSource);
 	maxconn := config.nthreads;
@@ -666,7 +746,7 @@ runnetconn(nc: ref Netconn, t: Transport)
 	ach := chan of ref ByteSource;
 	retry := 4;
 #	retry := 0;
-	err := "";
+
 
 	assert(nc.ngcur < nc.qlen);
 	bs := nc.queue[nc.ngcur];
@@ -805,9 +885,9 @@ Netconn.new(id: int) : ref Netconn
 			"",		# host
 			0,		# port
 			"",		# scheme
-			ref Dial->Connection(nil, nil, ""),	# conn
-			nil,		# ssl context
-			0,		# undetermined ssl version
+			sys->Connection(nil, nil, ""),	# conn
+			nil,		# tls connection
+			0,		# (unused)
 			NCfree,	# state
 			array[10] of ref ByteSource,	# queue
 			0,		# qlen
@@ -816,7 +896,10 @@ Netconn.new(id: int) : ref Netconn
 			0,		# connected
 			0,		# tstate
 			nil,		# tbuf
-			0		# idlestart
+			0,		# idlestart
+			0,		# chunked
+			0,		# chunkrem
+			0		# chunkeof
 			);
 }
 
@@ -826,7 +909,9 @@ Netconn.makefree(nc: self ref Netconn)
 		sys->print("NC %d: free\n", nc.id);
 	nc.state = NCfree;
 	nc.host = "";
-	nc.conn = nil;
+	nc.conn.dfd = nil;
+	nc.conn.cfd = nil;
+	nc.conn.dir = "";
 	nc.qlen = 0;
 	nc.gocur = 0;
 	nc.ngcur = 0;
@@ -835,6 +920,9 @@ Netconn.makefree(nc: self ref Netconn)
 	nc.connected = 0;
 	nc.tstate = 0;
 	nc.tbuf = nil;
+	nc.chunked = 0;
+	nc.chunkrem = 0;
+	nc.chunkeof = 0;
 	for(i := 0; i < len nc.queue; i++)
 		nc.queue[i] = nil;
 }
@@ -1028,9 +1116,15 @@ ImageCache.deletelru(ic: self ref ImageCache)
 		}
 		else
 			ic.memused -= ci.bytes();
-		for(i := 0; i < len ci.mims; i++)
-			ci.mims[i].free();
-		ci.mims = nil;
+		# Do NOT call ci.mims[i].free() here.
+		# Other Items may still reference this CImage via shared ci pointers
+		# (set in addsubords: i.ci = cachedci / i.ci = s.ci).
+		# Freeing mims while Items hold references causes a use-after-free
+		# race: the drawing code can dereference .im after it's been nil'd
+		# and the underlying Image/Memimage has been GC'd, leading to SEGV.
+		# Instead, just unlink from the cache and let the GC collect
+		# the MaskedImages when all Item references are gone.
+		ci.next = nil;
 		ic.n--;
 	}
 }
@@ -1123,6 +1217,12 @@ Header.new() : ref Header
 jpmagic := array[] of {byte 16rFF, byte 16rD8, byte 16rFF, byte 16rE0,
 		byte 0, byte 0, byte 'J', byte 'F', byte 'I', byte 'F', byte 0};
 pngsig := array[] of { byte 137, byte 80, byte 78, byte 71, byte 13, byte 10, byte 26, byte 10 };
+webpmagic := array[] of { byte 'R', byte 'I', byte 'F', byte 'F' };
+webpsig := array[] of { byte 'W', byte 'E', byte 'B', byte 'P' };
+avifsig := array[] of { byte 'f', byte 't', byte 'y', byte 'p' };
+avifbrand1 := array[] of { byte 'a', byte 'v', byte 'i', byte 'f' };
+avifbrand2 := array[] of { byte 'm', byte 'i', byte 'f', byte '1' };
+avifbrand3 := array[] of { byte 'a', byte 'v', byte 'i', byte 's' };
 
 # Set the mtype (and possibly chset) fields of h based on (in order):
 #	first bytes of file, if unambigous
@@ -1169,6 +1269,21 @@ Header.setmediatype(h: self ref Header, name: string, first: array of byte)
 						break;
 				if (i == len pngsig)
 					mt = ImagePng;
+			} else if (n >= 12 && first[0] == webpmagic[0] && first[1] == webpmagic[1]
+					&& first[2] == webpmagic[2] && first[3] == webpmagic[3]
+					&& first[8] == webpsig[0] && first[9] == webpsig[1]
+					&& first[10] == webpsig[2] && first[11] == webpsig[3]) {
+				mt = ImageWebP;
+			} else if (n >= 12 && first[4] == avifsig[0] && first[5] == avifsig[1]
+					&& first[6] == avifsig[2] && first[7] == avifsig[3]) {
+				# ISOBMFF ftyp box: check brand at offset 8
+				if ((first[8] == avifbrand1[0] && first[9] == avifbrand1[1]
+					&& first[10] == avifbrand1[2] && first[11] == avifbrand1[3])
+				   || (first[8] == avifbrand2[0] && first[9] == avifbrand2[1]
+					&& first[10] == avifbrand2[2] && first[11] == avifbrand2[3])
+				   || (first[8] == avifbrand3[0] && first[9] == avifbrand3[1]
+					&& first[10] == avifbrand3[2] && first[11] == avifbrand3[3]))
+					mt = ImageAvif;
 			}
 		}
 	}
@@ -1229,14 +1344,14 @@ ResourceState.cur() : ResourceState
 	if(mfd == nil)
 		mfd = sys->open("/dev/memory", sys->OREAD);
 	if (mfd == nil)
-		raise sys->sprint("can't open /dev/memory: %r");
+		raisex(sys->sprint("can't open /dev/memory: %r"));
 
 	sys->seek(mfd, big 0, Sys->SEEKSTART);
 
 	buf := array[400] of byte;
 	n := sys->read(mfd, buf, len buf);
 	if (n <= 0)
-		raise sys->sprint("can't read /dev/memory: %r");
+		raisex(sys->sprint("can't read /dev/memory: %r"));
 
 	(nil, l) := sys->tokenize(string buf[0:n], "\n");
 	# p->cursize, p->maxsize, p->hw, p->nalloc, p->nfree, p->nbrk, poolmax(p), p->name)
@@ -1442,7 +1557,23 @@ setconfig(argl: list of string)
 	# Defaults, in absence of any other information
 	config.userdir = "";
 	config.srcdir = "/appl/cmd/charon";
-	config.starturl = "file:/services/webget/start.html";
+	# Select start page based on lucifer theme
+	theme := "";
+	tfd := sys->open("/lib/lucifer/theme/current", sys->OREAD);
+	if(tfd != nil) {
+		tb := array[64] of byte;
+		tn := sys->read(tfd, tb, len tb);
+		if(tn > 0) {
+			theme = string tb[0:tn];
+			# Strip trailing whitespace/newline
+			while(len theme > 0 && (theme[len theme - 1] == '\n' || theme[len theme - 1] == ' '))
+				theme = theme[0:len theme - 1];
+		}
+	}
+	if(theme == "halo")
+		config.starturl = "file:/services/webget/start_light.html";
+	else
+		config.starturl = "file:/services/webget/start_dark.html";
 	config.homeurl = config.starturl;
 	config.change_homeurl = 1;
 	config.helpurl = "file:/services/webget/help.html";
@@ -1454,22 +1585,23 @@ setconfig(argl: list of string)
 	config.noproxydoms = nil;
 	config.buttons = "help,resize,hide,exit";
 	config.framework = "all";
-	config.defaultwidth = 640;
+	config.defaultwidth = 1024;
 	config.defaultheight = 480;
 	config.x = -1;
 	config.y = -1;
 	config.nocache = 0;
 	config.maxstale = 0;
+	config.headless = 0;
 	config.imagelvl = ImgFull;
 	config.imagecachenum = 120;
 	config.imagecachemem = 100000000;	# 100Meg, will get lowered later
 	config.docookies = 1;
 	config.doscripts = 1;
-	config.httpminor = 0;
-	config.agentname = "Mozilla/4.08 (Charon; Inferno)";
-	config.nthreads = 4;
+	config.httpminor = 1;
+	config.agentname = "Mozilla/5.0 (compatible; Inferno; Dis) Charon/1.0 (https://github.com/psilva261/infernode)";
+	config.nthreads = 8;
 	config.offersave = 1;
-	config.charset = "windows-1252";
+	config.charset = "utf-8";
 	config.plumbport = "web";
 	config.wintitle = "Charon";	# tkclient->titlebar() title, used by GUI
 	config.dbgfile = "";
@@ -1635,6 +1767,12 @@ setopt(key: string, val: string) : int
 		config.imagecachemem = v;
 	"docookies" =>
 		config.docookies = v;
+	"doacme" =>
+		config.doacme = v;
+	"render" =>
+		config.dorender = v;
+	"headless" =>
+		config.headless = v;
 	"doscripts" =>
 		config.doscripts = v;
 	"http" =>
@@ -1765,7 +1903,7 @@ makestrinttab(a: array of string) : array of T->StringInt
 		ans[i].key = a[i];
 		ans[i].val = i;
 		if(i > 0 && a[i] < a[i-1])
-			raise "EXInternal: table out of alphabetical order";
+			raisex("EXInternal: table out of alphabetical order");
 	}
 	return ans;
 }
@@ -1847,6 +1985,11 @@ color(s: string, dflt: int) : int
 	}
 	if(s[0] == '#')
 		s = s[1:];
+	# Expand 3-digit CSS hex shorthand: #abc -> #aabbcc
+	if(len s == 3) {
+		r := s[0]; g := s[1]; b := s[2];
+		s = sys->sprint("%c%c%c%c%c%c", r, r, g, g, b, b);
+	}
 	(v, rest) := S->toint(s, 16);
 	if(rest == "")
 		return v;
@@ -1868,10 +2011,15 @@ min(a,b: int) : int
 	return b;
 }
 
+raisex(e: string)
+{
+	raise e;
+}
+
 assert(i: int)
 {
 	if(!i) {
-		raise "EXInternal: assertion failed";
+		raisex("EXInternal: assertion failed");
 #		sys->print("assertion failed\n");
 #		s := hmeth[-1];
 	}

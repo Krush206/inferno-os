@@ -5,6 +5,9 @@ RImagefile: module
 	READXBMPATH:	con "/dis/lib/readxbitmap.dis";
 	READPICPATH:	con "/dis/lib/readpicfile.dis";
 	READPNGPATH:	con "/dis/lib/readpng.dis";
+	READWEBPPATH:	con "/dis/lib/readwebp.dis";
+	READAVIFPATH:	con "/dis/lib/readavif.dis";
+	READSVGPATH:	con "/dis/lib/readsvg.dis";
 
 	Rawimage: adt
 	{
@@ -23,6 +26,7 @@ RImagefile: module
 	CRGB:   con 0;  # three channels, no map
 	CY:     con 1;  # one channel, luminance
 	CRGB1:  con 2;  # one channel, map present
+	CRGBA:  con 3;  # four channels: R, G, B, A
 
 	init:	fn(bufio: Bufio);
 	read:	fn(fd: ref Bufio->Iobuf): (ref Rawimage, string);

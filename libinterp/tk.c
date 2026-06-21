@@ -77,6 +77,8 @@ tkmodinit(void)
 	tksorttable();
 }
 
+static int toplevel_count = 0;
+
 void
 Tk_toplevel(void *a)
 {
@@ -88,6 +90,9 @@ Tk_toplevel(void *a)
 	Display *disp;
 	F_Tk_toplevel *f = a;
 	void *r;
+
+	toplevel_count++;
+	fprint(2, "TK_TOPLEVEL[%d]: entry\n", toplevel_count);
 
 	r = *f->ret;
 	*f->ret = H;
@@ -120,7 +125,7 @@ Tk_toplevel(void *a)
 	tkw->di = H;
 
 	tktopopt(tk, string2c(f->arg));
-	
+
 	tk->geom = tkmoveresize;
 	tk->name = tkmkname(".");
 	if(tk->name == nil) {
@@ -136,7 +141,29 @@ Tk_toplevel(void *a)
 		return;
 	}
 	t->ctxt = ctxt;
-	t->screenr = disp->image->r;
+	/* Set both formats of screenr */
+	t->c_screenr = disp->image->r;	/* C Rectangle for internal libtk use */
+	/* Convert C Rectangle to Limbo_Rect (32-byte format with 64-bit coords) */
+	t->screenr.min_x = disp->image->r.min.x;
+	t->screenr.min_y = disp->image->r.min.y;
+	t->screenr.max_x = disp->image->r.max.x;
+	t->screenr.max_y = disp->image->r.max.y;
+	{
+		uchar *p = (uchar*)t;
+		print("TK_TOPLEVEL: t=%p\n", t);
+		print("  bytes[0-31]:  %02x%02x%02x%02x %02x%02x%02x%02x  %02x%02x%02x%02x %02x%02x%02x%02x  %02x%02x%02x%02x %02x%02x%02x%02x  %02x%02x%02x%02x %02x%02x%02x%02x\n",
+			p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7],p[8],p[9],p[10],p[11],p[12],p[13],p[14],p[15],
+			p[16],p[17],p[18],p[19],p[20],p[21],p[22],p[23],p[24],p[25],p[26],p[27],p[28],p[29],p[30],p[31]);
+		print("  bytes[32-63]: %02x%02x%02x%02x %02x%02x%02x%02x  %02x%02x%02x%02x %02x%02x%02x%02x  %02x%02x%02x%02x %02x%02x%02x%02x  %02x%02x%02x%02x %02x%02x%02x%02x\n",
+			p[32],p[33],p[34],p[35],p[36],p[37],p[38],p[39],p[40],p[41],p[42],p[43],p[44],p[45],p[46],p[47],
+			p[48],p[49],p[50],p[51],p[52],p[53],p[54],p[55],p[56],p[57],p[58],p[59],p[60],p[61],p[62],p[63]);
+		print("  offset 0 (dd):     %p\n", t->dd);
+		print("  offset 8 (wreq):   %p\n", t->wreq);
+		print("  offset 16 (di):    %p\n", t->di);
+		print("  offset 24 (wmctxt):%p\n", t->wmctxt);
+		print("  offset 32 screenr: (%lld,%lld)-(%lld,%lld)\n",
+			t->screenr.min_x, t->screenr.min_y, t->screenr.max_x, t->screenr.max_y);
+	}
 
 	tkw->next = t->windows;
 	t->windows = tk;
@@ -147,21 +174,91 @@ Tk_toplevel(void *a)
 	*f->ret = (Tk_Toplevel*)t;
 }
 
+/*
+ * Fix garbage coordinates in configure commands.
+ * Due to DIS VM stack frame corruption, Limbo code computing
+ * coordinates from top.screenr can produce garbage values.
+ * This workaround detects garbage and substitutes correct values.
+ */
+static char*
+fixconfigurecoords(TkTop *t, char *arg)
+{
+	char *xpos, *ypos;
+	vlong x, y;
+	vlong screen_w, screen_h;
+	char *fixed;
+
+	/* Only fix ". configure -x N -y N" commands */
+	if(strncmp(arg, ". configure -x ", 15) != 0)
+		return nil;
+
+	/* Parse the x and y values */
+	xpos = arg + 15;  /* skip ". configure -x " */
+	x = strtoll(xpos, nil, 10);
+
+	ypos = strstr(arg, " -y ");
+	if(ypos == nil)
+		return nil;
+	ypos += 4;  /* skip " -y " */
+	y = strtoll(ypos, nil, 10);
+
+	/* Get screen dimensions from our trusted C-side values */
+	screen_w = t->screenr.max_x - t->screenr.min_x;
+	screen_h = t->screenr.max_y - t->screenr.min_y;
+
+	/* Check if coordinates are garbage (way outside screen bounds) */
+	if(x >= 0 && x <= screen_w && y >= 0 && y <= screen_h)
+		return nil;  /* Coordinates look valid, don't fix */
+
+	/* Coordinates are garbage - compute centered position */
+	/* Toolbar is approximately 200 pixels wide, position at bottom third */
+	x = (screen_w - 200) / 2 + t->screenr.min_x;
+	y = (screen_h * 2) / 3 + t->screenr.min_y;  /* bottom third */
+
+	fprint(2, "FIXCOORDS: garbage detected, using x=%lld y=%lld (screen %lldx%lld)\n",
+		x, y, screen_w, screen_h);
+
+	/* Build fixed command string */
+	fixed = malloc(64);
+	if(fixed == nil)
+		return nil;
+	snprint(fixed, 64, ". configure -x %lld -y %lld", x, y);
+	return fixed;
+}
+
+static int cmd_count = 0;
+
 void
 Tk_cmd(void *a)
 {
 	TkTop *t;
 	char *val, *e;
 	F_Tk_cmd *f = a;
+	char *arg;
+	char *fixedarg;
 
 	t = (TkTop*)f->t;
 	if(t == H || D2H(t)->t != fakeTkTop) {
 		retstr(TkNotop, f->ret);
 		return;
 	}
+	arg = string2c(f->arg);
+	cmd_count++;
+	/* Log every configure command to stderr */
+	if(strstr(arg, "configure") != nil) {
+		fprint(2, "TK_CMD[%d]: %s\n", cmd_count, arg);
+	}
+
+	/* Fix garbage coordinates from DIS VM stack corruption */
+	fixedarg = fixconfigurecoords(t, arg);
+	if(fixedarg != nil) {
+		fprint(2, "TK_CMD: FIXED '%s' -> '%s'\n", arg, fixedarg);
+		arg = fixedarg;
+	}
+
 	lockctxt(t->ctxt);
 	val = nil;
-	e = tkexec(t, string2c(f->arg), &val);
+	e = tkexec(t, arg, &val);
 	unlockctxt(t->ctxt);
 	if(e == TkNomem){
 		free(val);
@@ -176,8 +273,10 @@ Tk_cmd(void *a)
 	else
 		retstr(e == nil ? val : e, f->ret);
 	if(tkwiretap != nil)
-		tkwiretap(t, string2c(f->arg), val, nil, nil);
+		tkwiretap(t, arg, val, nil, nil);
 	free(val);
+	if(fixedarg != nil)
+		free(fixedarg);
 }
 
 void
@@ -197,19 +296,28 @@ Tk_rect(void *fp)
 	F_Tk_rect *f = fp;
 	Tk *tk;
 	TkTop *t;
-	Rectangle r;
+	Draw_Rect *ret;
 	Point o;
 	int bd, flags, w, h;
+	int minx, miny, maxx, maxy;
 
 	t = (TkTop*)f->t;
+	ret = f->ret;
 	if(t == H || D2H(t)->t != fakeTkTop){
-		*(Rectangle*)f->ret = ZR;
+		/* Zero out full 64-bit Draw_Rect */
+		ret->min.x = 0;
+		ret->min.y = 0;
+		ret->max.x = 0;
+		ret->max.y = 0;
 		return;
 	}
 	lockctxt(t->ctxt);
 	tk = tklook(t, string2c(f->name), 0);
 	if(tk == nil){
-		*(Rectangle*)f->ret = ZR;
+		ret->min.x = 0;
+		ret->min.y = 0;
+		ret->max.x = 0;
+		ret->max.y = 0;
 		unlockctxt(t->ctxt);
 		return;
 	}
@@ -233,16 +341,21 @@ Tk_rect(void *fp)
 	if(bd < 0)
 		bd = 0;
 	if(flags & Tk_Border){
-		r.min = o;
-		r.max.x = r.min.x + w + bd + bd;
-		r.max.y = r.min.y + h + bd + bd;
+		minx = o.x;
+		miny = o.y;
+		maxx = minx + w + bd + bd;
+		maxy = miny + h + bd + bd;
 	}else{
-		r.min.x = o.x + bd;
-		r.min.y = o.y + bd;
-		r.max.x = r.min.x + w;
-		r.max.y = r.min.y + h;
+		minx = o.x + bd;
+		miny = o.y + bd;
+		maxx = minx + w;
+		maxy = miny + h;
 	}
-	*(Rectangle*)f->ret = r;
+	/* Write as 64-bit WORDs for Limbo compatibility */
+	ret->min.x = (WORD)minx;
+	ret->min.y = (WORD)miny;
+	ret->max.x = (WORD)maxx;
+	ret->max.y = (WORD)maxy;
 }
 
 int
@@ -763,6 +876,8 @@ tkdelpanelimage(TkTop *t, Image *i)
 	free(pi);
 }
 
+static int putimage_entry_count = 0;
+
 void
 Tk_putimage(void *a)
 {
@@ -778,6 +893,9 @@ Tk_putimage(void *a)
 	Tk *tk;
 
 	f = a;
+	putimage_entry_count++;
+	fprint(2, "TK_PUTIMAGE[%d]: entry, f->t=%p f->i=%p f->name='%s'\n",
+		putimage_entry_count, f->t, f->i, f->name != H ? string2c(f->name) : "<nil>");
 
 	r = *f->ret;
 	*f->ret = H;
@@ -785,11 +903,13 @@ Tk_putimage(void *a)
 
 	t = (TkTop*)f->t;
 	if(t == H || D2H(t)->t != fakeTkTop) {
+		fprint(2, "  -> FAILED: not a toplevel\n");
 		retstr(TkNotop, f->ret);
 		return;
 	}
 
 	if(f->i == H) {
+		fprint(2, "  -> FAILED: image is H (nil)\n");
 		retstr(TkBadvl, f->ret);
 		return;
 	}
@@ -1128,6 +1248,8 @@ tkdestroywinimage(Tk *tk)
 	tkwreq(top, "delete %s", name);
 }
 
+static int putimage_count = 0;
+
 static char*
 tkputwinimage(Tk *tk, Draw_Image *di, int reqid)
 {
@@ -1137,11 +1259,19 @@ tkputwinimage(Tk *tk, Draw_Image *di, int reqid)
 	int bw2, prop, resize;
 	Rectangle req;
 
+	putimage_count++;
+	fprint(2, "TKPUTWINIMAGE[%d]: window '%s' di=%p reqid=%d\n",
+		putimage_count, tk->name ? tk->name->name : "?", di, reqid);
+
 	top = tk->env->top;
 	tkw = TKobj(TkWin, tk);
 	i = lookupimage(di);
-	if (i == nil || i->display != top->display)
+	if (i == nil || i->display != top->display) {
+		fprint(2, "  -> FAILED: i=%p (nil=%d, display mismatch=%d)\n",
+			i, i == nil, i != nil && i->display != top->display);
 		return TkNotwm;
+	}
+	fprint(2, "  -> image rect=(%d,%d)-(%d,%d)\n", i->r.min.x, i->r.min.y, i->r.max.x, i->r.max.y);
 
 	if(reqid != -1 && reqid < tkw->reqid)
 		return "!request out of date";

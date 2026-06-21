@@ -13,14 +13,13 @@ extern	char*	hosttype;
 char*	tkfont;	/* for libtk/utils.c */
 int	tkstylus;	/* libinterp/tk.c */
 extern	int	mflag;
-	int	dflag;
+	int	dflag = 0;
 	int vflag;
 	int	vflag;
 	Procs	procs;
 	char	*eve;
-	int	Xsize	= 640;
-	int	Ysize	= 480;
-	int	bflag = 1;
+	int	Xsize	= 1600;
+	int	Ysize	= 1024;
 	int	sflag;
 	int	qflag;
 	int	xtblbit;
@@ -70,7 +69,7 @@ geom(char *val)
 {
 	char *p;
 	int x, y;
-	if (val == '\0' || (*val < '0' || *val > '9')) 
+	if (val == nil || (*val < '0' || *val > '9'))
 		return 0;
 	x = strtoul(val, &p, 0);
 	if(x >= 64) 
@@ -138,8 +137,8 @@ option(int argc, char *argv[], void (*badusage)(void))
 		if(cflag < 0|| cflag > 9)
 			usage();
 		break;
-	case 'I':	/* (temporary option) run without cons */
-		dflag++;
+	case 'I':	/* run with cons */
+		dflag = 1;
 		break;
 	case 'd':		/* run as a daemon */
 		dflag++;
@@ -227,22 +226,32 @@ putenvqv(char *name, char **v, int n, int conf)
 	free(val);
 }
 
-void
-nofence(void)
-{
-}
-
-void
-main(int argc, char *argv[])
+/*
+ * emu_run — the body of main(), extracted as a callable entry point.
+ *
+ * This is the function the JNI bridge in android-app/.../jni-emu.c
+ * delegates to. The standalone `o.emu` executable (used via
+ * `adb shell /data/local/tmp/o.emu` and on Linux/macOS) calls it
+ * directly from main() below.
+ *
+ * Returns an int for JNI compatibility, but in practice never returns
+ * in headless mode — libinit() does not return (worker threads take
+ * over and the original thread sleeps). On the GUI_SDL3 path it can
+ * unwind through sdl3_mainloop only on shutdown.
+ *
+ * Single-instance constraint: emu's globals (rootdir, eve, libinit
+ * state, etc.) are process-scoped, so emu_run must not be called more
+ * than once per process. The Android APK enforces this by holding the
+ * lone io.infernode.Emu object — its run() native method is a class
+ * member and naturally serialises caller threads.
+ */
+int
+emu_run(int argc, char *argv[])
 {
 	char *opt, *p;
 	char *enva[20];
 	int envc;
 
-	#ifndef PLAN9
-	if(coherence == nil)
-		coherence = nofence;
-	#endif
 	quotefmtinstall();
 	savestartup(argc, argv);
 	/* set default root now, so either $EMU or -r can override it later */
@@ -265,8 +274,37 @@ main(int argc, char *argv[])
 	if(vflag)
 		print("Inferno %s main (pid=%d) %s\n", VERSION, getpid(), opt);
 
+#ifdef GUI_SDL3
+	/* Pre-initialize SDL3 on main thread (macOS Cocoa requirement) */
+	extern int sdl3_preinit(void);
+	sdl3_preinit();
+#endif
+
 	libinit(imod);
+
+#ifdef GUI_SDL3
+	/* SDL3: Main thread must run event loop for Cocoa/NSWindow */
+	/* libinit() returned (emuinit on worker thread), so we run SDL loop here */
+	extern void sdl3_mainloop(void);
+	sdl3_mainloop();  /* NEVER RETURNS */
+#endif
+	/* Headless: libinit never returns, so we never get here */
+	return 0;
 }
+
+/*
+ * EMU_NO_MAIN: a libemu build (the iOS app target) provides its own
+ * entry point — UIApplicationMain on the main thread — and calls
+ * emu_run() from a worker thread. Compile out emu's main() there so it
+ * doesn't collide with the app's. Inert for every normal build.
+ */
+#ifndef EMU_NO_MAIN
+void
+main(int argc, char *argv[])
+{
+	emu_run(argc, argv);
+}
+#endif
 
 void
 emuinit(void *imod)
@@ -308,6 +346,7 @@ emuinit(void *imod)
 	kbind("#^", "/chan", MBEFORE);
 	kbind("#m", "/dev", MBEFORE);	/* pointer */
 	kbind("#c", "/dev", MBEFORE);
+	kbind("#A", "/dev", MBEFORE);	/* audio; no-op on hosts without devaudio */
 	kbind("#p", "/prog", MREPL);
 	kbind("#d", "/fd", MREPL);
 	kbind("#I", "/net", MAFTER);	/* will fail on Plan 9 */
@@ -350,7 +389,9 @@ errorf(char *fmt, ...)
 void
 error(char *err)
 {
-	if(err != up->env->errstr && up->env->errstr != nil)
+	if(err == nil)
+		err = "unknown error";
+	if(up != nil && up->env != nil && up->env->errstr != nil && err != up->env->errstr)
 		kstrcpy(up->env->errstr, err, ERRMAX);
 //	ossetjmp(up->estack[NERR-1]);
 	nexterror();
@@ -423,7 +464,7 @@ iprint(char *fmt, ...)
 	n = vseprint(buf, buf+sizeof buf, fmt, va) - buf;
 	va_end(va);
 
-	write(1, buf, n);
+	if(write(1, buf, n)){/*nothing*/}
 	return 1;
 }
 
@@ -436,7 +477,6 @@ _assert(char *fmt)
 /*
  * mainly for libmp
  */
-#ifndef PLAN9
 void
 sysfatal(char *fmt, ...)
 {
@@ -448,7 +488,6 @@ sysfatal(char *fmt, ...)
 	va_end(arg);
 	error(buf);
 }
-#endif
 
 void
 oserror(void)

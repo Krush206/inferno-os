@@ -5,6 +5,13 @@ PATH: con "/dis/charon/layout.dis";
 ReliefBd: con 2;
 ReliefSunk, ReliefRaised : con iota;
 
+# Containing block for CSS2.1 positioned element resolution
+ContainingBlock: adt {
+	origin: Draw->Point;	# top-left in frame coordinates
+	width: int;
+	height: int;
+};
+
 # Frames
 
 Frame: adt
@@ -116,7 +123,7 @@ Control: adt {
 	ff: ref Build->Formfield;
 	r: Draw->Rect;			# coords in f.cim coord system
 	flags:	int;
-	popup:	ref Gui->Popup;
+	popup:	ref Menu->Popup;
 	pick {
 		Cbutton =>
 			pic:		ref Draw->Image;		# picture on button (if no label)
@@ -158,6 +165,7 @@ Control: adt {
 			deltaval: int;
 			ctl:		cyclic ref Control;	# if non-nil, scrolls this control
 			holdstate: (int, int);
+			wsb:		ref Widget->Scrollbar;	# widget.m scrollbar (frame vscr only)
 		Canimimage =>
 			cim:		ref CharonUtils->CImage;
 			cur:		int;				# current frame
@@ -214,6 +222,18 @@ Lay: adt
 	background: Build->Background;	# background for layout
 	just: byte;				# default line justification
 	flags: byte;			# Lchanged
+
+	# CSS margin collapsing state
+	last_margin_bottom: int;	# bottom margin of previous block sibling (for collapsing)
+
+	# CSS text properties (inherited from enclosing Ibox's ComputedStyle)
+	text_indent: int;		# first-line indent in pixels (0 = none)
+	line_height: int;		# minimum line height in pixels (-1 = not set)
+	letter_spacing: int;		# extra letter spacing in pixels (-1 = not set)
+	word_spacing: int;		# extra word spacing in pixels (-1 = not set)
+	white_space: byte;		# WSnormal, WSpre, WSnowrap, WS_prewrap
+	word_break: byte;		# WBnormal, WBbreak_all, WBkeep_all
+	text_overflow: byte;		# TOclip, TOellipsis
 
 	new: fn(targetwidth: int, just: byte, margin: int, bg: Build->Background) : ref Lay;
 };

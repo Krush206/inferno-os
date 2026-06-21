@@ -372,7 +372,8 @@ mkchoicemenu(Tk *tkb)
 
 	for(i = tkl->nvalues - 1; i >= 0; i--){
 		tkc = tknewobj(t, TKlabel, sizeof(Tk)+sizeof(TkLabel));
-		/* XXX recover from malloc failure */
+		if(tkc == nil)
+			return nil;
 		tkc->flag = Tkwest|Tkfillx|Tktop;
 		tkc->highlightwidth = 0;
 		tkc->borderwidth = 1;
@@ -386,7 +387,6 @@ mkchoicemenu(Tk *tkb)
 		tkcl->justify = Tkleft;
 		tkcl->text = strdup(tkl->values[i]);
 		tkcl->command = smprint("%s invoke %d", tkb->name->name, i);
-		/* XXX recover from malloc failure */
 		tksizelabel(tkc);
 		tkc->req.height = tkb->req.height;
 		appenditem(menu, tkc, 0);
@@ -485,7 +485,7 @@ tkchoicebutset(Tk *tk, char *arg, char **val)
 		return nil;
 	free(tkl->text);
 	tkl->text = strdup(tkl->values[v]);
-	/* XXX recover from malloc error */
+	/* strdup may fail under memory pressure */
 	tkl->check = v;
 
 	sprint(buf, "%d", v);
@@ -555,7 +555,7 @@ tkchoicebutsetvalue(Tk *tk, char *arg, char **val)
 		return TkBadvl;
 	free(tkl->text);
 	tkl->text = strdup(*v);
-	/* XXX recover from malloc error */
+	/* strdup may fail under memory pressure */
 	tkl->check = v - tkl->values;
 
 	tk->dirty = tkrect(tk, 1);
@@ -612,7 +612,7 @@ tkchoicevarchanged(Tk *tk, char *var, char *value)
 			return;		/* what else can we do? */
 		free(tkl->text);
 		tkl->text = strdup(tkl->values[v]);
-		/* XXX recover from malloc error */
+		/* strdup may fail under memory pressure */
 		tkl->check = v;
 		tk->dirty = tkrect(tk, 0);
 		tkdirty(tk);
@@ -993,7 +993,7 @@ tkmpost(Tk *tk, int x, int y, int cascade, int bh, int adjust)
 
 	t = tk->env->top;
 	if(adjust){
-		dr = &t->screenr;
+		dr = &t->c_screenr;
 		if(x+tk->act.width > dr->max.x)
 			x = dr->max.x - tk->act.width;
 		if(x < 0)
@@ -1604,7 +1604,7 @@ autoscroll(Tk *tk, void *v, int cancelled)
 print("not autoscrolling, act: %P, req: %P\n", tkw->act, tkw->req);
 		return;
 }
-	dr = tk->env->top->screenr;
+	dr = tk->env->top->c_screenr;
 	delta.x = TKF2I(tkw->delta.x * tkw->speed);
 	delta.y = TKF2I(tkw->delta.y * tkw->speed);
 	r = rectaddpt(tkrect(tk, 1), Pt(tk->borderwidth + tkw->act.x, tk->borderwidth + tkw->act.y));
@@ -1650,7 +1650,7 @@ startautoscroll(Tk *tk, TkMouse *m)
 	Point d;
 	TkWin *tkw;
 	tkw = TKobj(TkWin, tk);
-	dr = tk->env->top->screenr;
+	dr = tk->env->top->c_screenr;
 	r = rectaddpt(tkrect(tk, 1), Pt(tk->borderwidth + tkw->act.x, tk->borderwidth + tkw->act.y));
 	d = Pt(0, 0);
 	if(m->x <= 0 && r.min.x < dr.min.x)

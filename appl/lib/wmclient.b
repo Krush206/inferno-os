@@ -1,87 +1,103 @@
 implement Wmclient;
-
-#
-# Copyright © 2003 Vita Nuova Holdings Limited
-#
-
 include "sys.m";
 	sys: Sys;
 include "draw.m";
 	draw: Draw;
 	Display, Image, Screen, Rect, Point, Pointer, Wmcontext, Context: import draw;
-include "tk.m";
-	tk: Tk;
-	Toplevel: import tk;
 include "wmlib.m";
 	wmlib: Wmlib;
 	qword, splitqword, s2r: import wmlib;
-include "titlebar.m";
-	titlebar: Titlebar;
 include "wmclient.m";
+include "lucitheme.m";
 
 Focusnone, Focusimage, Focustitle: con iota;
 
-Bdup: con int 16rffffffff;
-Bddown: con int 16radadadff;
+# Single subdued window border, applied uniformly to focused and
+# unfocused windows so every wm app shows the same calm frame in
+# Lucifer's presentation zone.  Focus state is signalled elsewhere
+# (cursor, status, content), not by a brighter chrome line.
+windowbordercol: int = int 16r1a1a1aff;
+screenbg:        int = int 16r000000ff;	# screen fill shown between windows
+
+# INFR-29 kbd safety net.  ctxt.kbd is unbuffered; if the wm sends
+# a kbd event to a focused window whose app doesn't read it, the
+# wm send blocks and the entire UI freezes.  wmclient.window()
+# spawns a default drainer per Window that discards kbd events
+# until the app calls startinput("kbd"), at which point the
+# drainer exits so the app can read ctxt.kbd directly.
+#
+# State lives module-private (NOT in the Window adt) so the
+# adt's interface signature stays stable — adding fields to
+# Window would force a rebuild of every wm app + lucifer.
+KbdState: adt {
+	ctxt:	ref Draw->Wmcontext;	# identity key
+	stop:	chan of int;		# send to terminate drainer
+	subscribed:	int;		# set after first startinput("kbd")
+};
+kbdstates: list of ref KbdState;
 
 init()
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
-	tk = load Tk Tk->PATH;
 	wmlib = load Wmlib Wmlib->PATH;
 	if(wmlib == nil){
 		sys->fprint(sys->fildes(2), "wmclient: cannot load %s: %r\n", Wmlib->PATH);
 		raise "fail:bad module";
 	}
 	wmlib->init();
-	titlebar = load Titlebar Titlebar->PATH;
-	if(titlebar == nil){
-		sys->fprint(sys->fildes(2), "wmclient: cannot load %s: %r\n", Titlebar->PATH);
-		raise "fail:bad module";
+
+	lucitheme := load Lucitheme Lucitheme->PATH;
+	if(lucitheme != nil) {
+		th := lucitheme->gettheme();
+		windowbordercol = th.windowborder;
+		screenbg        = th.bg;
 	}
-	titlebar->init();
+}
+
+retheme(w: ref Window)
+{
+	lucitheme := load Lucitheme Lucitheme->PATH;
+	if(lucitheme != nil) {
+		th := lucitheme->gettheme();
+		windowbordercol = th.windowborder;
+		screenbg        = th.bg;
+	}
+	drawborder(w);
 }
 
 makedrawcontext(): ref Draw->Context
 {
 	return wmlib->makedrawcontext();
 }
-
-cursorspec(img: ref Draw->Image): string
-{
-	Hex: con "0123456789abcdef";
-	if(img == nil || img.depth != 1)
-		return "cursor";
-	display := img.display;
-	hot := img.r.min;
-	if(img.r.min.x != 0 || img.r.min.y != 0){
-		n := display.newimage(((0, 0), img.r.size()), Draw->GREY1, 0, Draw->Nofill);
-		n.draw(n.r, img, nil, img.r.min);
-		img = n;
-	}
-	s := sys->sprint("cursor %d %d %d %d ", hot.x, hot.y, img.r.dx(), img.r.dy());
-	nb := img.r.dy() * draw->bytesperline(img.r, img.depth);
-	buf := array[nb] of byte;
-	if(img.readpixels(img.r, buf) == -1)
-		return "cursor";
-
-	for(i := 0; i < nb; i++){
-		c := int buf[i];
-		s[len s] = Hex[c >> 4];
-		s[len s] = Hex[c & 16rf];
-	}
-	return s;
-}
 		
 blankwin: Window;
-window(ctxt: ref Draw->Context, title: string, buts: int): ref Window
+window(ctxt: ref Draw->Context, nil: string, buts: int): ref Window
 {
 	w := ref blankwin;
 	w.ctxt = wmlib->connect(ctxt);
 	w.display = ctxt.display;
-	w.ctl = chan of string;
+	w.ctl = chan[2] of string;
 	readscreenrect(w);
+
+	# INFR-29 safety net: wm sends kbd events to focused windows on
+	# an unbuffered chan.  Apps that don't drain it deadlock the
+	# entire UI on the first keypress.  Spawn a default drainer
+	# that discards kbd events; startinput("kbd") stops it so apps
+	# that subscribe read ctxt.kbd as before.  No app-side change
+	# required and Window adt is not extended (keeps wmclient.m's
+	# interface signature stable for all callers).
+	# stop is buffered (chan[1]) so startinput()'s non-blocking signal
+	# can never be lost: under -c0 the spawned drainer may not have
+	# parked in its alt yet when startinput fires, and an unbuffered
+	# send would then hit the default branch and leave the drainer
+	# running — it would then split ctxt.kbd with the real reader, so
+	# each got every OTHER key ("two" typed as "w"). With a buffer the
+	# signal sticks until the drainer next reaches its alt and exits.
+	# (INFR-101.)
+	ks := ref KbdState(w.ctxt, chan[1] of int, 0);
+	kbdstates = ks :: kbdstates;
+	spawn kbddrainer(ks);
 
 	if(buts & Plain)
 		return w;
@@ -90,31 +106,55 @@ window(ctxt: ref Draw->Context, title: string, buts: int): ref Window
 		buts &= ~(Resize|Hide);
 
 	w.bd = 1;
-	w.titlebar = tk->toplevel(ctxt.display, nil);
-	top := w.titlebar;
-	top.wreq = nil;
 
-	w.ctl = titlebar->new(top, buts);
-	titlebar->settitle(top, title);
-	sizetb(w);
 	w.wmctl("fixedorigin");
 	return w;
 }
 
+# Default kbd drainer.  Runs until startinput("kbd") sends to the
+# corresponding KbdState.stop channel.  Until then, every kbd event
+# from the wm is consumed and discarded so the wm send doesn't block.
+kbddrainer(ks: ref KbdState)
+{
+	for(;;) alt {
+	<-ks.stop =>
+		return;
+	<-ks.ctxt.kbd =>
+		;	# discard
+	}
+}
+
+# Find the KbdState entry for a given Wmcontext, or nil.
+findkbdstate(ctxt: ref Draw->Wmcontext): ref KbdState
+{
+	for(l := kbdstates; l != nil; l = tl l)
+		if((hd l).ctxt == ctxt)
+			return hd l;
+	return nil;
+}
+
 Window.pointer(w: self ref Window, p: Draw->Pointer): int
 {
-	if(w.screen == nil || w.titlebar == nil)
+	if(w.screen == nil)
+		return 0;
+
+	# Scroll wheel events (buttons 8/16) should pass through without focus changes
+	if(p.buttons & (8|16))
 		return 0;
 
 	if(p.buttons && (w.ptrfocus == Focusnone || w.buttons == 0)){
-		if(p.xy.in(w.tbrect))
+		if(inborder(w, p.xy))
 			w.ptrfocus = Focustitle;
 		else
 			w.ptrfocus = Focusimage;
 	}
 	w.buttons = p.buttons;
 	if(w.ptrfocus == Focustitle){
-		tk->pointer(w.titlebar, p);
+		if(p.buttons & (2|4))
+			w.ctl <-= sys->sprint("!size . -1 %d %d", 0, 0);
+		else if(p.buttons & 1){
+			w.ctl <-= sys->sprint("!move . -1 %d %d", p.xy.x, p.xy.y);
+		}
 		return 1;
 	}
 	return 0;
@@ -122,11 +162,9 @@ Window.pointer(w: self ref Window, p: Draw->Pointer): int
 
 # titlebar requested size might have changed:
 # find out what size it's requesting.
-sizetb(w: ref Window)
+sizetb(nil: ref Window)
 {
-	if(w.titlebar == nil)
-		return;
-	w.tbsize = tk->rect(w.titlebar, ".", Tk->Border|Tk->Required).size();
+	return;
 }
 
 # reshape the image; the space needed for the
@@ -143,21 +181,25 @@ putimage(w: ref Window, i: ref Image)
 {
 	if(w.screen != nil && i == w.screen.image)
 		return;
-	w.screen = Screen.allocate(i, w.display.color(Draw->White), 0);
+#	display := w.ctxt.ctxt.display;
+	w.screen = Screen.allocate(i, w.display.color(screenbg), 0);
 	ir := i.r.inset(w.bd);
 	if(ir.dx() < 0)
 		ir.max.x = ir.min.x;
 	if(ir.dy() < 0)
 		ir.max.y = ir.min.y;
-	if(w.titlebar != nil){
-		w.tbrect = Rect(ir.min, (ir.max.x, ir.min.y + w.tbsize.y));
-		tbimage := w.screen.newwindow(w.tbrect, Draw->Refnone, Draw->Nofill);
-		tk->putimage(w.titlebar, ".", tbimage, nil);
-		ir.min.y = w.tbrect.max.y;
-	}
 	if(ir.dy() < 0)
 		ir.max.y = ir.min.y;
 	w.image = w.screen.newwindow(ir, Draw->Refnone, Draw->Nofill);
+	# INFR-27: Pre-fill w.image with the screen background so that
+	# any region the app doesn't paint (notably the 1-pixel ring
+	# inside w.image when an app uses w.imager(w.image.r) for its
+	# content rect — fractals, keyring, settings, wallet) shows a
+	# dark, themed colour instead of undefined display memory
+	# (often white). Apps that fill w.image.r themselves overwrite
+	# this and pay nothing.
+	if(w.image != nil)
+		w.image.draw(w.image.r, w.display.color(screenbg), nil, (0, 0));
 	drawborder(w);
 	w.r = i.r;
 }
@@ -166,11 +208,6 @@ putimage(w: ref Window, i: ref Image)
 # titlebar and border are included.
 Window.screenr(w: self ref Window, r: Rect): Rect
 {
-	if(w.titlebar != nil){
-		if(r.dx() < w.tbsize.x)
-			r.max.x = r.min.x + w.tbsize.x;
-		r.min.y -= w.tbsize.y;
-	}
 	return r.inset(-w.bd);
 }
 
@@ -183,27 +220,31 @@ Window.imager(w: self ref Window, r: Rect): Rect
 		r.max.x = r.min.x;
 	if(r.dy() < 0)
 		r.max.y = r.min.y;
-	if(w.titlebar != nil){
-		r.min.y += w.tbsize.y;
-		if(r.dy() < 0)
-			r.max.y = r.min.y;
-	}
 	return r;
 }
 
-# draw an imitation tk border.
+# draw an imitation tk border using a single subdued, theme-driven colour
+# regardless of focus state.
 drawborder(w: ref Window)
 {
 	if(w.screen == nil)
 		return;
-	col := w.display.color(Bdup);
+	col := w.display.color(windowbordercol);
 	i := w.screen.image;
 	r := w.screen.image.r;
 	i.draw((r.min, (r.min.x+w.bd, r.max.y)), col, nil, (0, 0));
 	i.draw(((r.min.x+w.bd, r.min.y), (r.max.x, r.min.y+w.bd)), col, nil, (0, 0));
-	col = w.display.color(Bddown);
 	i.draw(((r.max.x-w.bd, r.min.y+w.bd), r.max), col, nil, (0, 0));
 	i.draw(((r.min.x+w.bd, r.max.y-w.bd), (r.max.x-w.bd, r.max.y)), col, nil, (0, 0));
+}
+
+inborder(w: ref Window, p: Point): int
+{
+	r := w.screen.image.r;
+	return (Rect(r.min, (r.min.x+w.bd, r.max.y))).contains(p) ||
+		(Rect((r.min.x+w.bd, r.min.y), (r.max.x, r.min.y+w.bd))).contains(p) ||
+		(Rect((r.max.x-w.bd, r.min.y+w.bd), r.max)).contains(p) ||
+		(Rect((r.min.x+w.bd, r.max.y-w.bd), (r.max.x-w.bd, r.max.y))).contains(p);
 }
 
 readscreenrect(w: ref Window)
@@ -228,8 +269,23 @@ Window.onscreen(w: self ref Window, how: string)
 
 Window.startinput(w: self ref Window, devs: list of string)
 {
-	for(; devs != nil; devs = tl devs)
+	for(; devs != nil; devs = tl devs) {
+		# INFR-29 safety net: an app subscribing to kbd takes
+		# ownership of ctxt.kbd, so signal the default drainer
+		# to exit.  Idempotent — only the first "kbd" subscription
+		# triggers; later calls find subscribed=1 and do nothing.
+		if(hd devs == "kbd") {
+			ks := findkbdstate(w.ctxt);
+			if(ks != nil && !ks.subscribed) {
+				ks.subscribed = 1;
+				alt {
+				ks.stop <-= 1 => ;
+				* => ;	# drainer already gone
+				}
+			}
+		}
 		w.wmctl(sys->sprint("start %q", hd devs));
+	}
 }
 
 # commands originating both from tkclient and wm (via ctl)
@@ -240,42 +296,17 @@ Window.wmctl(w: self ref Window, req: string): string
 	"exit" =>
 		sys->fprint(sys->open("/prog/" + string sys->pctl(0, nil) + "/ctl", Sys->OWRITE), "killgrp");
 		exit;
-	# old-style requests: pass them back around in proper form.
-	"move" =>
-		# move x y
-		if(w.titlebar != nil)
-			titlebar->sendctl(w.titlebar, "!move . -1 " + req[next:]);
-	"size" =>
-		if(w.titlebar != nil){
-			minsz := titlebar->minsize(w.titlebar);
-			titlebar->sendctl(w.titlebar, "!size . -1 " + string minsz.x + " " + string minsz.y);
-		}
-	"ok" or
-	"help" =>
-		;
 	"rect" =>
 		(w.displayr, nil) = s2r(req, next);
 	"haskbdfocus" =>
 		w.focused = int qword(req, next).t0;
-		if(w.titlebar != nil){
-			tk->cmd(w.titlebar, "focus -global " + string w.focused);
-			tk->cmd(w.titlebar, "update");
-		}
 		drawborder(w);
 	"task" =>
 		title := "";
-		if(w.titlebar != nil)
-			title = titlebar->title(w.titlebar);
 		wmreq(w, sys->sprint("task %q", title), next);
 		w.saved = w.r.min;
-		# send window out of the way
-		# XXX oops, can't do this for plain windows...
-		titlebar->sendctl(w.titlebar, "!reshape . -1 " + r2s((w.displayr.max, w.displayr.max.add(w.r.size()))));
 	"untask" =>
 		wmreq(w, req, next);
-		# put window back where it was before.
-		# XXX what do we we do if the window manager window has been reshape in the meantime...?
-		titlebar->sendctl(w.titlebar, "!reshape . -1 " + r2s((w.saved, w.saved.add(w.r.size()))));
 	* =>
 		return wmreq(w, req, next);
 	}
@@ -316,18 +347,9 @@ recvimage(w: ref Window)
 	putimage(w, i);
 }
 
-Window.settitle(w: self ref Window, title: string): string
+Window.settitle(nil: self ref Window, nil: string): string
 {
-	if(w.titlebar == nil)
-		return nil;
-	oldr := w.imager(w.r);
-	old := titlebar->settitle(w.titlebar, title);
-	sizetb(w);
-	if(w.tbsize.x < w.r.dx())
-		tk->putimage(w.titlebar, ".", w.titlebar.image, nil);	# unsuspend the window
-	else
-		w.wmctl("!reshape . -1 " + r2s(w.screenr(oldr)));
-	return old;
+	return nil;
 }
 
 snarfget(): string

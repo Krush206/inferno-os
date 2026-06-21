@@ -599,8 +599,8 @@ mknavobj(ex: ref Exec) : ref Obj
 	reinitprop(navobj, "appName", ES->strval("Netscape"));
 #	reinitprop(navobj, "appVersion", ES->strval("3.0 (Inferno, U)"));
 #	reinitprop(navobj, "userAgent", ES->strval("Mozilla/3.0 (Inferno; U)"));
-	reinitprop(navobj, "appVersion", ES->strval("4.08 (Charon; Inferno)"));
-	reinitprop(navobj, "userAgent", ES->strval("Mozilla/4.08 (Charon; Inferno)"));
+	reinitprop(navobj, "appVersion", ES->strval("5.0 (compatible; Charon/1.0; Inferno)"));
+	reinitprop(navobj, "userAgent", ES->strval("Mozilla/5.0 (compatible; Charon/1.0; Inferno)"));
 
 	omty := getobj(ex, navobj, "mimeTypes");
 	for(i := 0; i < len mimespecs; i++) {
@@ -1928,7 +1928,7 @@ updateffopts(ex: ref Exec, oform, oformfield: ref Obj, ix: int)
 		sel := ES->get(ex, oopt, "selected") == ES->true;
 		val := ES->toString(ex, ES->get(ex, oopt, "value"));
 		text := ES->toString(ex, ES->get(ex, oopt, "text"));
-		option := ref B->Option(sel, val, text);
+		option := ref B->Option(sel, val, text, "");
 		optl = option :: optl;
 		if (noptl++ == 0) {
 			firstobj = oopt;
@@ -2107,7 +2107,7 @@ specindex(class: string) : int
 		if(objspecs[i].name == class)
 			break;
 	if(i == len objspecs)
-		raise "EXInternal: couldn't find host object class " + class;
+		CU->raisex("EXInternal: couldn't find host object class " + class);
 	return i;
 }
 
@@ -2660,6 +2660,35 @@ fieldinstant(ex : ref Exec, field: ref Build->Formfield, oform: ref Obj) : ref V
 		options.host = me;
 	Build->Ftextarea =>
 		ty = "textarea";
+	Build->Femail =>
+		ty = "email";
+		reinitprop(ofield, "value", ES->strval(field.value));
+	Build->Furl =>
+		ty = "url";
+		reinitprop(ofield, "value", ES->strval(field.value));
+	Build->Fnumber =>
+		ty = "number";
+		reinitprop(ofield, "value", ES->strval(field.value));
+	Build->Ftel =>
+		ty = "tel";
+		reinitprop(ofield, "value", ES->strval(field.value));
+	Build->Fsearch =>
+		ty = "search";
+		reinitprop(ofield, "value", ES->strval(field.value));
+	Build->Fdate =>
+		ty = "date";
+		reinitprop(ofield, "value", ES->strval(field.value));
+	Build->Ftime =>
+		ty = "time";
+		reinitprop(ofield, "value", ES->strval(field.value));
+	Build->Fcolor =>
+		ty = "color";
+		reinitprop(ofield, "value", ES->strval(field.value));
+	Build->Frange =>
+		ty = "range";
+		reinitprop(ofield, "value", ES->strval(field.value));
+	* =>
+		ty = "text";
 	}
 	reinitprop(ofield, "type", ES->strval(ty));
 	for(el := field.events; el != nil; el = tl el) {

@@ -43,7 +43,17 @@ PKCS: module {
 	id_pkcs_challengePassword,
 	id_pkcs_unstructuredAddress,
 	id_pkcs_extCertAttrs,
-	id_algorithm_shaWithDSS		: con iota;
+	id_algorithm_shaWithDSS,
+	id_ec_publicKey,
+	id_ecdsa_sha256,
+	id_ecdsa_sha384,
+	id_prime256v1,
+	id_sha256WithRSAEncryption,
+	id_sha384WithRSAEncryption,
+	id_mldsa65,
+	id_mldsa87,
+	id_slhdsa192s,
+	id_slhdsa256s			: con iota;
 
 	# PKCS1
 

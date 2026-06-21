@@ -18,6 +18,9 @@
 
 static Type*	TDigestState;
 static Type*	TAESstate;
+static Type*	TAESGCMstate;
+static Type*	TChaChastate;
+static Type*	TECpoint;
 static Type*	TDESstate;
 static Type*	TIDEAstate;
 static Type*	TBFstate;
@@ -45,6 +48,9 @@ enum {
 
 static uchar DigestStatemap[] = Keyring_DigestState_map;
 static uchar AESstatemap[] = Keyring_AESstate_map;
+static uchar AESGCMstatemap[] = Keyring_AESGCMstate_map;
+static uchar ChaChastatemap[] = Keyring_ChaChastate_map;
+static uchar ECpointmap[] = Keyring_ECpoint_map;
 static uchar DESstatemap[] = Keyring_DESstate_map;
 static uchar IDEAstatemap[] = Keyring_IDEAstate_map;
 static uchar BFstatemap[] = Keyring_BFstate_map;
@@ -137,6 +143,8 @@ big64conv(Fmt *f)
 	n = (b->top+1)*Dbytes + 1;
 	n = ((n+3)/3)*4 + 1;
 	buf = malloc(n);
+	if(buf == nil)
+		return fmtstrcpy(f, "<nomem>");
 	bigtobase64(b, buf, n);
 	n = fmtstrcpy(f, buf);
 	free(buf);
@@ -364,6 +372,14 @@ Keyring_genSK(void *fp)
 	release();
 	sk->key = (*sa->vec->gensk)(f->length);
 	acquire();
+	/*
+	 * gensk returns nil when key generation fails (e.g. an invalid key
+	 * size).  Honour genSK's contract by returning nil rather than an SK
+	 * with a nil internal key, which would otherwise trip exBadSK only on
+	 * later use.
+	 */
+	if(sk->key == nil)
+		*f->ret = H;
 }
 
 void
@@ -897,7 +913,7 @@ sign(SK *sk, char *ha, ulong exp, uchar *a, int len)
 	int n;
 	SigAlg *sa;
 	DigestState *ds;
-	uchar digest[SHA1dlen];
+	uchar digest[SHA256dlen];
 	char *buf;
 	String *hastr;
 
@@ -909,7 +925,11 @@ sign(SK *sk, char *ha, ulong exp, uchar *a, int len)
 
 	/* add signer name and expiration time to hash */
 	n = snprint(buf, Maxbuf, "%s %lud", string2c(sk->x.owner), exp);
-	if(strcmp(ha, "sha") == 0 || strcmp(ha, "sha1") == 0){
+	if(strcmp(ha, "sha256") == 0){
+		ds = sha256(a, len, 0, 0);
+		sha256((uchar*)buf, n, digest, ds);
+		n = Keyring_SHA256dlen;
+	} else if(strcmp(ha, "sha") == 0 || strcmp(ha, "sha1") == 0){
 		ds = sha1(a, len, 0, 0);
 		sha1((uchar*)buf, n, digest, ds);
 		n = Keyring_SHA1dlen;
@@ -954,7 +974,7 @@ Keyring_sign(void *fp)
 	SigAlg *sa;
 	SK *sk;
 	XDigestState *ds;
-	uchar digest[SHA1dlen];
+	uchar digest[SHA256dlen];
 	char *buf;
 	void *v;
 
@@ -974,7 +994,10 @@ Keyring_sign(void *fp)
 		return;
 	ds = (XDigestState*)f->state;
 	n = snprint(buf, Maxbuf, "%s %d", string2c(sk->x.owner), f->exp);
-	if(strcmp(string2c(f->ha), "sha") == 0 || strcmp(string2c(f->ha), "sha1") == 0){
+	if(strcmp(string2c(f->ha), "sha256") == 0){
+		sha256((uchar*)buf, n, digest, &ds->state);
+		n = Keyring_SHA256dlen;
+	} else if(strcmp(string2c(f->ha), "sha") == 0 || strcmp(string2c(f->ha), "sha1") == 0){
 		sha1((uchar*)buf, n, digest, &ds->state);
 		n = Keyring_SHA1dlen;
 	} else if(strcmp(string2c(f->ha), "md5") == 0){
@@ -1040,7 +1063,7 @@ verify(PK *pk, Certificate *c, char *a, int len)
 	int n;
 	SigAlg *sa, *pksa;
 	DigestState *ds;
-	uchar digest[SHA1dlen];
+	uchar digest[SHA256dlen];
 	char *buf;
 
 	sa = checkSigAlg(c->x.sa);
@@ -1053,7 +1076,11 @@ verify(PK *pk, Certificate *c, char *a, int len)
 	if(buf == nil)
 		return 0;
 	n = snprint(buf, Maxbuf, "%s %d", string2c(c->x.signer), c->x.exp);
-	if(strcmp(string2c(c->x.ha), "sha") == 0 || strcmp(string2c(c->x.ha), "sha1") == 0){
+	if(strcmp(string2c(c->x.ha), "sha256") == 0){
+		ds = sha256((uchar*)a, len, 0, 0);
+		sha256((uchar*)buf, n, digest, ds);
+		n = Keyring_SHA256dlen;
+	} else if(strcmp(string2c(c->x.ha), "sha") == 0 || strcmp(string2c(c->x.ha), "sha1") == 0){
 		ds = sha1((uchar*)a, len, 0, 0);
 		sha1((uchar*)buf, n, digest, ds);
 		n = Keyring_SHA1dlen;
@@ -1094,7 +1121,7 @@ Keyring_verify(void *fp)
 	SigAlg *sa, *pksa;
 	PK *pk;
 	XDigestState *ds;
-	uchar digest[SHA1dlen];
+	uchar digest[SHA256dlen];
 	char *buf;
 
 	f = fp;
@@ -1116,7 +1143,10 @@ Keyring_verify(void *fp)
 	n = snprint(buf, Maxbuf, "%s %d", string2c(c->x.signer), c->x.exp);
 	ds = (XDigestState*)f->state;
 
-	if(strcmp(string2c(c->x.ha), "sha") == 0 || strcmp(string2c(c->x.ha), "sha1") == 0){
+	if(strcmp(string2c(c->x.ha), "sha256") == 0){
+		sha256((uchar*)buf, n, digest, &ds->state);
+		n = Keyring_SHA256dlen;
+	} else if(strcmp(string2c(c->x.ha), "sha") == 0 || strcmp(string2c(c->x.ha), "sha1") == 0){
 		sha1((uchar*)buf, n, digest, &ds->state);
 		n = Keyring_SHA1dlen;
 	} else if(strcmp(string2c(c->x.ha), "md5") == 0){
@@ -1301,6 +1331,59 @@ Keyring_sha512(void *fp)
 	*f->ret = keyring_digest_x(f->buf, f->n, f->digest, SHA512dlen, f->state, sha512);
 }
 
+/*
+ * SHA-3 (FIPS 202) one-shot digest functions
+ * These use SHA3state internally (not DigestState), so they
+ * are one-shot only — no incremental hashing support.
+ */
+void
+Keyring_sha3_256(void *fp)
+{
+	F_Keyring_sha3_256 *f;
+	uchar *cbuf;
+	int n;
+
+	f = fp;
+	*f->ret = 0;
+
+	if(f->buf == H || f->digest == H)
+		return;
+
+	n = f->n;
+	if(n > f->buf->len)
+		n = f->buf->len;
+	if(f->digest->len < SHA3_256dlen)
+		error(exBadDigest);
+
+	cbuf = f->buf->data;
+	sha3_256(cbuf, n, f->digest->data);
+	*f->ret = SHA3_256dlen;
+}
+
+void
+Keyring_sha3_512(void *fp)
+{
+	F_Keyring_sha3_512 *f;
+	uchar *cbuf;
+	int n;
+
+	f = fp;
+	*f->ret = 0;
+
+	if(f->buf == H || f->digest == H)
+		return;
+
+	n = f->n;
+	if(n > f->buf->len)
+		n = f->buf->len;
+	if(f->digest->len < SHA3_512dlen)
+		error(exBadDigest);
+
+	cbuf = f->buf->data;
+	sha3_512(cbuf, n, f->digest->data);
+	*f->ret = SHA3_512dlen;
+}
+
 void
 Keyring_md5(void *fp)
 {
@@ -1346,7 +1429,7 @@ keyring_hmac_x(Array *data, int n, Array *key, Array *digest, int dlen, Keyring_
 		cdata = nil;
 	}
 
-	if(key == H || key->len > 64)
+	if(key == H)
 		error(exBadKey);
 
 	if(digest != H){
@@ -1395,6 +1478,45 @@ Keyring_hmac_md5(void *fp)
 }
 
 void
+Keyring_hmac_sha256(void *fp)
+{
+	F_Keyring_hmac_sha256 *f;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+	*f->ret = keyring_hmac_x(f->data, f->n, f->key, f->digest, SHA256dlen, f->state, hmac_sha256);
+}
+
+void
+Keyring_hmac_sha384(void *fp)
+{
+	F_Keyring_hmac_sha384 *f;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+	*f->ret = keyring_hmac_x(f->data, f->n, f->key, f->digest, SHA384dlen, f->state, hmac_sha384);
+}
+
+void
+Keyring_hmac_sha512(void *fp)
+{
+	F_Keyring_hmac_sha512 *f;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+	*f->ret = keyring_hmac_x(f->data, f->n, f->key, f->digest, SHA512dlen, f->state, hmac_sha512);
+}
+
+void
 Keyring_dhparams(void *fp)
 {
 	F_Keyring_dhparams *f;
@@ -1414,7 +1536,7 @@ Keyring_dhparams(void *fp)
 	release();
 	if(f->nbits == 1024)
 		DSAprimes(alpha, p, nil);
-	else
+	else if(!getdhparams(f->nbits, p, alpha))
 		gensafeprime(p, alpha, f->nbits, 0);
 	acquire();
 	f->ret->t0 = newIPint(alpha);
@@ -1520,6 +1642,9 @@ getmsgerr(char *buf, int n, int r)
 	char *e;
 	int l;
 
+	/* Null check added for security (cppcheck warning) */
+	if(buf == nil)
+		return;
 	e = r>0? MSG: "hungup";
 	l = strlen(e)+1;
 	if(n > l)
@@ -1600,14 +1725,20 @@ void
 Keyring_auth(void *fp)
 {
 	F_Keyring_auth *f;
-	mpint *r0, *r1, *p, *alpha, *alphar0, *alphar1, *alphar0r1;
+	mpint *r0, *r1, *p, *alpha, *alphar0, *alphar1, *alphar0r1, *pm1;
 	SK *mysk;
 	PK *mypk, *spk, *hispk;
 	Certificate *cert, *hiscert, *alphacert;
 	char *buf, *err;
 	uchar *cvb;
-	int n, fd, version;
+	int n, fd;
 	long now;
+	/* hybrid post-quantum (ML-KEM-768) key agreement material */
+	uchar myek[MLKEM768_PKLEN], mydk[MLKEM768_SKLEN];
+	uchar hisek[MLKEM768_PKLEN], myct[MLKEM768_CTLEN], hisct[MLKEM768_CTLEN];
+	uchar ss_local[MLKEM_SSLEN], ss_remote[MLKEM_SSLEN];
+	uchar *kss_lo, *kss_hi, *ek_lo, *ek_hi;
+	int cmp;
 
 	hispk = H;
 	hiscert = H;
@@ -1620,7 +1751,7 @@ Keyring_auth(void *fp)
 	f->ret->t0 = H;
 	destroy(f->ret->t1);
 	f->ret->t1 = H;
-	r0 = r1 = alphar0 = alphar1 = alphar0r1 = nil;
+	r0 = r1 = alphar0 = alphar1 = alphar0r1 = pm1 = nil;
 
 	/* check args */
 	if(f->fd == H || f->fd->fd < 0){
@@ -1635,8 +1766,8 @@ Keyring_auth(void *fp)
 		return;
 	}
 
-	/* send auth protocol version number */
-	if(sendmsg(fd, "1", 1) <= 0){
+	/* send auth protocol version number (2 = hybrid PQ; required) */
+	if(sendmsg(fd, "2", 1) <= 0){
 		err = MSG;
 		goto out;
 	}
@@ -1648,9 +1779,13 @@ Keyring_auth(void *fp)
 		goto out;
 	}
 	buf[n] = 0;
-	version = atoi(buf);
-	if(version != 1 || n > 4){
-		err = "incompatible authentication protocol";
+	/*
+	 * Require the version token to be exactly "2".  atoi() would accept
+	 * non-canonical encodings such as "2abc", "0002", "+2" or " 2",
+	 * widening the pre-auth attack surface; demand a single canonical byte.
+	 */
+	if(n != 1 || buf[0] != '2'){
+		err = "incompatible authentication protocol (need hybrid PQ v2)";
 		goto out;
 	}
 
@@ -1702,12 +1837,15 @@ Keyring_auth(void *fp)
 	alphar0r1 = mpnew(0);
 
 	/* generate alpha**r0 */
-if(0)print("X");
 	release();
 	mprand(mpsignif(p), genrandom, r0);
 	mpexp(alpha, r0, p, alphar0);
 	acquire();
-if(0)print("Y");
+
+	/* generate ephemeral ML-KEM-768 keypair for hybrid PQ key agreement */
+	release();
+	mlkem768_keygen(myek, mydk);
+	acquire();
 
 	/* send alpha**r0 mod p, mycert, and mypk */
 	n = bigtobase64(alphar0, buf, Maxbuf);
@@ -1728,6 +1866,12 @@ if(0)print("Y");
 		goto out;
 	}
 
+	/* send my ML-KEM-768 public key */
+	if(sendmsg(fd, (char*)myek, MLKEM768_PKLEN) <= 0){
+		err = MSG;
+		goto out;
+	}
+
 	/* get alpha**r1 mod p, hiscert, hispk */
 	n = getmsg(fd, buf, Maxbuf-1);
 	if(n < 0){
@@ -1737,8 +1881,31 @@ if(0)print("Y");
 	buf[n] = 0;
 	alphar1 = strtomp(buf, nil, 64, nil);
 
-	/* trying a fast one */
-	if(mpcmp(p, alphar1) <= 0){
+	/*
+	 * strtomp() returns nil when the peer sends a value with no valid
+	 * base64/mpint digits (e.g. a non-base64 DH share).  mpcmp()
+	 * dereferences its arguments unconditionally, so passing nil here is
+	 * a pre-auth remote crash (INFR-322).  Reject it before any compare.
+	 */
+	if(alphar1 == nil){
+		err = "malformed diffie hellman share";
+		goto out;
+	}
+
+	/*
+	 * Validate the peer's DH share before doing any further work:
+	 * require 1 < alphar1 < p-1 (INFR-323).  Rejecting <= 1 also rejects
+	 * zero and negative values because mpcmp() is sign-aware; rejecting
+	 * >= p-1 also rejects >= p.  The weak shares 0, 1, p-1 (and p) force
+	 * the shared secret into a tiny subgroup and must never be accepted.
+	 */
+	if(mpcmp(alphar1, mpone) <= 0){
+		err = "implausible parameter value";
+		goto out;
+	}
+	pm1 = mpnew(0);
+	mpsub(p, mpone, pm1);
+	if(mpcmp(alphar1, pm1) >= 0){
 		err = "implausible parameter value";
 		goto out;
 	}
@@ -1789,10 +1956,51 @@ if(0)print("Y");
 		goto out;
 	}
 
-	/* sign alpha**r0 and alpha**r1 and send */
+	/* get his ML-KEM-768 public key (sent right after his pk) */
+	n = getmsg(fd, buf, Maxbuf-1);
+	if(n < 0){
+		err = buf;
+		goto out;
+	}
+	if(n != MLKEM768_PKLEN){
+		err = "bad ml-kem public key length";
+		goto out;
+	}
+	memmove(hisek, buf, MLKEM768_PKLEN);
+
+	/* encapsulate to his ek, send the ciphertext */
+	release();
+	mlkem768_encaps(myct, ss_local, hisek);
+	acquire();
+	if(sendmsg(fd, (char*)myct, MLKEM768_CTLEN) <= 0){
+		err = MSG;
+		goto out;
+	}
+
+	/* get his ciphertext, decapsulate with my dk */
+	n = getmsg(fd, buf, Maxbuf-1);
+	if(n < 0){
+		err = buf;
+		goto out;
+	}
+	if(n != MLKEM768_CTLEN){
+		err = "bad ml-kem ciphertext length";
+		goto out;
+	}
+	memmove(hisct, buf, MLKEM768_CTLEN);
+	mlkem768_decaps(ss_remote, hisct, mydk);
+
+	/*
+	 * sign alpha**r0, alpha**r1 and both ML-KEM public keys, then send.
+	 * Binding the eks into the signed transcript authenticates the PQ
+	 * key agreement: an active attacker cannot substitute ML-KEM keys
+	 * without invalidating the signature.
+	 */
 	n = bigtobase64(alphar0, buf, Maxbuf);
 	n += bigtobase64(alphar1, buf+n, Maxbuf-n);
-	alphacert = sign(mysk, "sha1", 0, (uchar*)buf, n);
+	memmove(buf+n, myek, MLKEM768_PKLEN); n += MLKEM768_PKLEN;
+	memmove(buf+n, hisek, MLKEM768_PKLEN); n += MLKEM768_PKLEN;
+	alphacert = sign(mysk, "sha256", 0, (uchar*)buf, n);
 	n = certtostr(alphacert, buf, Maxbuf);
 	if(sendmsg(fd, buf, n) <= 0){
 		err = MSG;
@@ -1817,12 +2025,24 @@ if(0)print("Y");
 	certimmutable(alphacert);		/* hide from the garbage collector */
 	n = bigtobase64(alphar1, buf, Maxbuf);
 	n += bigtobase64(alphar0, buf+n, Maxbuf-n);
+	memmove(buf+n, hisek, MLKEM768_PKLEN); n += MLKEM768_PKLEN;
+	memmove(buf+n, myek, MLKEM768_PKLEN); n += MLKEM768_PKLEN;
 	if(verify(hispk, alphacert, buf, n) == 0){
 		err = "bad certificate";
 		goto out;
 	}
 
-	/* we are now authenticated and have a common secret, alpha**(r0*r1) */
+	/*
+	 * We are now mutually authenticated.  Derive the session secret by
+	 * combining the classical Diffie-Hellman secret alpha**(r0*r1) with
+	 * both ML-KEM-768 shared secrets using SHA3-512.  ss_local is keyed
+	 * to his ek (we encapsulated to it); ss_remote is keyed to my ek (he
+	 * encapsulated to it).  Both peers order the two KEM secrets and eks
+	 * identically by comparing the two public keys, so they derive the
+	 * same 64-byte secret.  The result stays secret unless BOTH the DH
+	 * and the ML-KEM problem are broken (hybrid / harvest-now-safe).
+	 * 64 bytes gives the ssl device a full key + IV for any cipher.
+	 */
 	f->ret->t0 = stringdup(hispk->x.owner);
 	mpexp(alphar1, r0, p, alphar0r1);
 	n = mptobe(alphar0r1, nil, Maxbuf, &cvb);
@@ -1830,7 +2050,37 @@ if(0)print("Y");
 		err = "bad conversion";
 		goto out;
 	}
-	f->ret->t1 = mem2array(cvb, n);
+
+	cmp = memcmp(myek, hisek, MLKEM768_PKLEN);
+	if(cmp == 0){
+		memset(cvb, 0, n);
+		free(cvb);
+		err = "ml-kem public key collision";
+		goto out;
+	}
+	if(cmp < 0){
+		kss_lo = ss_remote; ek_lo = myek;	/* my ek is the smaller */
+		kss_hi = ss_local;  ek_hi = hisek;
+	}else{
+		kss_lo = ss_local;  ek_lo = hisek;	/* his ek is the smaller */
+		kss_hi = ss_remote; ek_hi = myek;
+	}
+	{
+		uchar dig[SHA3_512dlen];
+		int m;
+
+		m = 0;
+		memmove(buf+m, "infernode-pq-sts-v2", 19); m += 19;
+		memmove(buf+m, cvb, n); m += n;
+		memmove(buf+m, kss_lo, MLKEM_SSLEN); m += MLKEM_SSLEN;
+		memmove(buf+m, kss_hi, MLKEM_SSLEN); m += MLKEM_SSLEN;
+		memmove(buf+m, ek_lo, MLKEM768_PKLEN); m += MLKEM768_PKLEN;
+		memmove(buf+m, ek_hi, MLKEM768_PKLEN); m += MLKEM768_PKLEN;
+		sha3_512((uchar*)buf, m, dig);
+		f->ret->t1 = mem2array(dig, SHA3_512dlen);
+		memset(dig, 0, sizeof(dig));
+	}
+	memset(cvb, 0, n);
 	free(cvb);
 
 out:
@@ -1891,14 +2141,25 @@ out:
 		certmutable(alphacert);
 		destroy(alphacert);
 	}
+	/* scrub ML-KEM secret key and shared secrets from the stack */
+	memset(mydk, 0, sizeof(mydk));
+	memset(ss_local, 0, sizeof(ss_local));
+	memset(ss_remote, 0, sizeof(ss_remote));
+	/* scrub the combiner buffer: it held the DH secret and both ML-KEM shared secrets */
+	memset(buf, 0, Maxbuf);
 	free(buf);
 	if(r0 != nil){
+		/* scrub the ephemeral DH private exponents and the DH shared secret */
+		memset(r0->p, 0, r0->size*sizeof(*r0->p));
+		memset(r1->p, 0, r1->size*sizeof(*r1->p));
+		memset(alphar0r1->p, 0, alphar0r1->size*sizeof(*alphar0r1->p));
 		mpfree(r0);
 		mpfree(r1);
 		mpfree(alphar0);
 		mpfree(alphar1);
 		mpfree(alphar0r1);
 	}
+	mpfree(pm1);
 }
 
 static Keyring_Authinfo*
@@ -1952,17 +2213,17 @@ Keyring_writeauthinfo(void *fp)
 		goto out;
 
 	/* signer's public key */
-	n = pktostr(spk, buf, Maxmsg);
+	n = pktostr(spk, buf, Maxbuf);
 	if(sendmsg(fd, buf, n) <= 0)
 		goto out;
 
 	/* certificate for my public key */
-	n = certtostr(c, buf, Maxmsg);
+	n = certtostr(c, buf, Maxbuf);
 	if(sendmsg(fd, buf, n) <= 0)
 		goto out;
 
 	/* my secret/public key */
-	n = sktostr(mysk, buf, Maxmsg);
+	n = sktostr(mysk, buf, Maxbuf);
 	if(sendmsg(fd, buf, n) <= 0)
 		goto out;
 
@@ -2024,7 +2285,7 @@ Keyring_readauthinfo(void *fp)
 		goto out;
 
 	/* signer's public key */
-	n = getmsg(fd, buf, Maxmsg);
+	n = getmsg(fd, buf, Maxbuf);
 	if(n < 0)
 		goto out;
 
@@ -2033,7 +2294,7 @@ Keyring_readauthinfo(void *fp)
 		goto out;
 
 	/* certificate for my public key */
-	n = getmsg(fd, buf, Maxmsg);
+	n = getmsg(fd, buf, Maxbuf);
 	if(n < 0)
 		goto out;
 	ai->cert = (Keyring_Certificate*)strtocert(buf);
@@ -2041,7 +2302,7 @@ Keyring_readauthinfo(void *fp)
 		goto out;
 
 	/* my secret/public key */
-	n = getmsg(fd, buf, Maxmsg);
+	n = getmsg(fd, buf, Maxbuf);
 	if(n < 0)
 		goto out;
 	mysk = strtosk(buf);
@@ -2054,14 +2315,14 @@ Keyring_readauthinfo(void *fp)
 	ai->mypk = (Keyring_PK*)mypk;
 
 	/* diffie hellman base */
-	n = getmsg(fd, buf, Maxmsg);
+	n = getmsg(fd, buf, Maxbuf);
 	if(n < 0)
 		goto out;
 	b = strtomp(buf, nil, 64, nil);
 	ai->alpha = newIPint(b);
 
 	/* diffie hellman modulus */
-	n = getmsg(fd, buf, Maxmsg);
+	n = getmsg(fd, buf, Maxbuf);
 	if(n < 0)
 		goto out;
 	b = strtomp(buf, nil, 64, nil);
@@ -2089,6 +2350,11 @@ keyringmodinit(void)
 	extern SigAlgVec* elgamalinit(void);
 	extern SigAlgVec* rsainit(void);
 	extern SigAlgVec* dsainit(void);
+	extern SigAlgVec* ed25519init(void);
+	extern SigAlgVec* mldsa65init(void);
+	extern SigAlgVec* mldsa87init(void);
+	extern SigAlgVec* slhdsa192sinit(void);
+	extern SigAlgVec* slhdsa256sinit(void);
 
 	ipintsmodinit();	/* in case only Keyring is configured */
 	TSigAlg = dtype(freeSigAlg, sizeof(SigAlg), SigAlgmap, sizeof(SigAlgmap));
@@ -2100,6 +2366,12 @@ keyringmodinit(void)
 		sizeof(DigestStatemap));
 	TAESstate = dtype(freeheap, sizeof(XAESstate), AESstatemap,
 		sizeof(AESstatemap));
+	TAESGCMstate = dtype(freeheap, sizeof(XAESGCMstate), AESGCMstatemap,
+		sizeof(AESGCMstatemap));
+	TChaChastate = dtype(freeheap, sizeof(XChaChastate), ChaChastatemap,
+		sizeof(ChaChastatemap));
+	TECpoint = dtype(freeheap, sizeof(XECpoint), ECpointmap,
+		sizeof(ECpointmap));
 	TDESstate = dtype(freeheap, sizeof(XDESstate), DESstatemap,
 		sizeof(DESstatemap));
 	TIDEAstate = dtype(freeheap, sizeof(XIDEAstate), IDEAstatemap,
@@ -2119,11 +2391,22 @@ keyringmodinit(void)
 	TRSApk = dtype(freeheap, sizeof(Keyring_RSApk), RSApkmap, sizeof(RSApkmap));
 	TRSAsig = dtype(freeheap, sizeof(Keyring_RSAsig), RSAsigmap, sizeof(RSAsigmap));
 
+	/* Register signature algorithms - Ed25519 first as preferred modern algorithm */
+	if((sav = ed25519init()) != nil)
+		algs[nalg++] = sav;
 	if((sav = elgamalinit()) != nil)
 		algs[nalg++] = sav;
 	if((sav = rsainit()) != nil)
 		algs[nalg++] = sav;
 	if((sav = dsainit()) != nil)
+		algs[nalg++] = sav;
+	if((sav = mldsa65init()) != nil)
+		algs[nalg++] = sav;
+	if((sav = mldsa87init()) != nil)
+		algs[nalg++] = sav;
+	if((sav = slhdsa192sinit()) != nil)
+		algs[nalg++] = sav;
+	if((sav = slhdsa256sinit()) != nil)
 		algs[nalg++] = sav;
 
 	fmtinstall('U', big64conv);
@@ -2549,6 +2832,112 @@ Keyring_aescbc(void *fp)
 		aesCBCencrypt(p, f->n, &is->state);
 	else
 		aesCBCdecrypt(p, f->n, &is->state);
+}
+
+void
+Keyring_aesgcmsetup(void *fp)
+{
+	F_Keyring_aesgcmsetup *f;
+	Heap *h;
+	XAESGCMstate *is;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->key == H || f->key->len <= 0)
+		error(exBadKey);
+	if(f->iv == H || f->iv->len <= 0)
+		error(exBadIvec);
+
+	h = heap(TAESGCMstate);
+	is = H2D(XAESGCMstate*, h);
+
+	setupAESGCMstate(&is->state, f->key->data, f->key->len, f->iv->data, f->iv->len);
+
+	*f->ret = (Keyring_AESGCMstate*)is;
+}
+
+void
+Keyring_aesgcmencrypt(void *fp)
+{
+	F_Keyring_aesgcmencrypt *f;
+	XAESGCMstate *is;
+	uchar tag[16];
+	uchar *buf;
+	int ndat;
+
+	f = fp;
+	destroy(f->ret->t0);
+	destroy(f->ret->t1);
+	f->ret->t0 = H;
+	f->ret->t1 = H;
+
+	if(f->dat == H)
+		return;
+
+	is = checktype(f->state, TAESGCMstate, exBadState, 0);
+
+	ndat = f->dat->len;
+
+	/* copy plaintext to temp buffer, encrypt in place */
+	buf = malloc(ndat);
+	if(buf == nil)
+		error(exNomem);
+	memmove(buf, f->dat->data, ndat);
+
+	aesgcm_encrypt(buf, ndat,
+		f->aad != H ? f->aad->data : nil,
+		f->aad != H ? f->aad->len : 0,
+		tag, &is->state);
+
+	f->ret->t0 = mem2array(buf, ndat);
+	f->ret->t1 = mem2array(tag, 16);
+	free(buf);
+}
+
+void
+Keyring_aesgcmdecrypt(void *fp)
+{
+	F_Keyring_aesgcmdecrypt *f;
+	XAESGCMstate *is;
+	uchar *buf;
+	int ndat;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->dat == H)
+		return;
+	if(f->tag == H || f->tag->len != 16)
+		error(exBadDigest);
+
+	is = checktype(f->state, TAESGCMstate, exBadState, 0);
+
+	ndat = f->dat->len;
+
+	/* copy ciphertext to temp buffer, decrypt in place */
+	buf = malloc(ndat);
+	if(buf == nil)
+		error(exNomem);
+	memmove(buf, f->dat->data, ndat);
+
+	if(aesgcm_decrypt(buf, ndat,
+		f->aad != H ? f->aad->data : nil,
+		f->aad != H ? f->aad->len : 0,
+		f->tag->data, &is->state) != 0){
+		/* authentication failed - return nil */
+		free(buf);
+		return;
+	}
+
+	*f->ret = mem2array(buf, ndat);
+	free(buf);
 }
 
 void
@@ -3080,4 +3469,601 @@ Keyring_IPint_random(void *fp)
 	b = mprand(f->maxbits, genrandom, nil);
 	acquire();
 	*f->ret = newIPint(b);
+}
+
+/*
+ *  X25519 (Curve25519 ECDH)
+ */
+void
+Keyring_x25519(void *fp)
+{
+	F_Keyring_x25519 *f;
+	uchar out[32];
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->scalar == H || f->scalar->len != 32)
+		error(exBadKey);
+	if(f->point == H || f->point->len != 32)
+		error(exBadKey);
+
+	x25519(out, f->scalar->data, f->point->data);
+
+	*f->ret = mem2array(out, 32);
+}
+
+void
+Keyring_x25519_base(void *fp)
+{
+	F_Keyring_x25519_base *f;
+	uchar out[32];
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->scalar == H || f->scalar->len != 32)
+		error(exBadKey);
+
+	x25519_base(out, f->scalar->data);
+
+	*f->ret = mem2array(out, 32);
+}
+
+/*
+ *  ChaCha20-Poly1305 AEAD
+ */
+void
+Keyring_ccpolyencrypt(void *fp)
+{
+	F_Keyring_ccpolyencrypt *f;
+	uchar tag[16];
+	uchar *buf;
+	int ndat;
+
+	f = fp;
+	destroy(f->ret->t0);
+	destroy(f->ret->t1);
+	f->ret->t0 = H;
+	f->ret->t1 = H;
+
+	if(f->dat == H)
+		return;
+	if(f->key == H || f->key->len != 32)
+		error(exBadKey);
+	if(f->nonce == H || f->nonce->len != 12)
+		error(exBadIvec);
+
+	ndat = f->dat->len;
+
+	buf = malloc(ndat);
+	if(buf == nil)
+		error(exNomem);
+	memmove(buf, f->dat->data, ndat);
+
+	ccpoly_encrypt(buf, ndat,
+		f->aad != H ? f->aad->data : nil,
+		f->aad != H ? f->aad->len : 0,
+		tag, f->key->data, f->nonce->data);
+
+	f->ret->t0 = mem2array(buf, ndat);
+	f->ret->t1 = mem2array(tag, 16);
+	free(buf);
+}
+
+void
+Keyring_ccpolydecrypt(void *fp)
+{
+	F_Keyring_ccpolydecrypt *f;
+	uchar *buf;
+	int ndat;
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->dat == H)
+		return;
+	if(f->tag == H || f->tag->len != 16)
+		error(exBadDigest);
+	if(f->key == H || f->key->len != 32)
+		error(exBadKey);
+	if(f->nonce == H || f->nonce->len != 12)
+		error(exBadIvec);
+
+	ndat = f->dat->len;
+
+	buf = malloc(ndat);
+	if(buf == nil)
+		error(exNomem);
+	memmove(buf, f->dat->data, ndat);
+
+	if(ccpoly_decrypt(buf, ndat,
+		f->aad != H ? f->aad->data : nil,
+		f->aad != H ? f->aad->len : 0,
+		f->tag->data, f->key->data, f->nonce->data) != 0){
+		/* authentication failed - return nil */
+		free(buf);
+		return;
+	}
+
+	*f->ret = mem2array(buf, ndat);
+	free(buf);
+}
+
+/*
+ *  P-256 (secp256r1) ECDH + ECDSA
+ */
+void
+Keyring_p256_keygen(void *fp)
+{
+	F_Keyring_p256_keygen *f;
+	Heap *h;
+	XECpoint *ep;
+	uchar priv[32];
+
+	f = fp;
+	destroy(f->ret->t0);
+	destroy(f->ret->t1);
+	f->ret->t0 = H;
+	f->ret->t1 = H;
+
+	h = heap(TECpoint);
+	ep = H2D(XECpoint*, h);
+
+	if(p256_keygen(priv, &ep->point) != 0){
+		destroy(ep);
+		return;
+	}
+
+	f->ret->t0 = mem2array(priv, 32);
+	f->ret->t1 = (Keyring_ECpoint*)ep;
+	secureZero(priv, 32);
+}
+
+void
+Keyring_p256_ecdh(void *fp)
+{
+	F_Keyring_p256_ecdh *f;
+	XECpoint *ep;
+	uchar shared[32];
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->priv == H || f->priv->len != 32)
+		error(exBadKey);
+	if(f->pub == H)
+		error(exBadPK);
+
+	ep = checktype(f->pub, TECpoint, exBadPK, 0);
+
+	if(p256_ecdh(shared, f->priv->data, &ep->point) != 0)
+		return;
+
+	*f->ret = mem2array(shared, 32);
+	secureZero(shared, 32);
+}
+
+void
+Keyring_p256_ecdsa_sign(void *fp)
+{
+	F_Keyring_p256_ecdsa_sign *f;
+	uchar sig[64];
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->priv == H || f->priv->len != 32)
+		error(exBadKey);
+	if(f->hash == H || f->hash->len == 0)
+		error(exBadDigest);
+
+	if(p256_ecdsa_sign(sig, f->priv->data, f->hash->data, f->hash->len) != 0)
+		return;
+
+	*f->ret = mem2array(sig, 64);
+}
+
+void
+Keyring_p256_ecdsa_verify(void *fp)
+{
+	F_Keyring_p256_ecdsa_verify *f;
+	XECpoint *ep;
+
+	f = fp;
+	*f->ret = 0;
+
+	if(f->pub == H)
+		return;
+	if(f->hash == H || f->hash->len == 0)
+		return;
+	if(f->sig == H || f->sig->len != 64)
+		return;
+
+	ep = checktype(f->pub, TECpoint, exBadPK, 0);
+
+	*f->ret = p256_ecdsa_verify(f->sig->data, &ep->point, f->hash->data, f->hash->len);
+}
+
+void
+Keyring_p256_make_point(void *fp)
+{
+	F_Keyring_p256_make_point *f;
+	Heap *h;
+	XECpoint *ep;
+
+	f = fp;
+	destroy(*f->ret);
+	*f->ret = H;
+
+	if(f->pubkey == H || f->pubkey->len != 65 || f->pubkey->data[0] != 0x04)
+		return;
+
+	h = heap(TECpoint);
+	ep = H2D(XECpoint*, h);
+
+	memmove(ep->point.x, f->pubkey->data + 1, 32);
+	memmove(ep->point.y, f->pubkey->data + 33, 32);
+
+	*f->ret = (Keyring_ECpoint*)ep;
+}
+
+void
+Keyring_p256_point_bytes(void *fp)
+{
+	F_Keyring_p256_point_bytes *f;
+	XECpoint *ep;
+	uchar outbuf[65];
+
+	f = fp;
+	destroy(*f->ret);
+	*f->ret = H;
+
+	if(f->pub == H)
+		return;
+
+	ep = checktype(f->pub, TECpoint, exBadPK, 0);
+
+	outbuf[0] = 0x04;
+	memmove(outbuf + 1, ep->point.x, 32);
+	memmove(outbuf + 33, ep->point.y, 32);
+
+	*f->ret = mem2array(outbuf, 65);
+}
+
+/*
+ *  P-384 (secp384r1) ECDSA verify only
+ *  Uses raw byte arrays instead of an ADT.
+ */
+void
+Keyring_p384_ecdsa_verify(void *fp)
+{
+	F_Keyring_p384_ecdsa_verify *f;
+	ECpoint384 pt;
+
+	f = fp;
+	*f->ret = 0;
+
+	/* pubkey must be 97 bytes: 0x04 + x[48] + y[48] */
+	if(f->pubkey == H || f->pubkey->len != 97 || f->pubkey->data[0] != 0x04)
+		return;
+	if(f->hash == H || f->hash->len == 0)
+		return;
+	if(f->sig == H || f->sig->len != 96)
+		return;
+
+	memmove(pt.x, f->pubkey->data + 1, 48);
+	memmove(pt.y, f->pubkey->data + 49, 48);
+
+	*f->ret = p384_ecdsa_verify(f->sig->data, &pt, f->hash->data, f->hash->len);
+}
+
+/*
+ *  secp256k1 ECDSA (Ethereum/Bitcoin)
+ *  Uses raw byte arrays: priv[32], pub[65], sig[65]
+ */
+void
+Keyring_secp256k1_keygen(void *fp)
+{
+	F_Keyring_secp256k1_keygen *f;
+	uchar priv[32], pub[65];
+
+	f = fp;
+	destroy(f->ret->t0);
+	destroy(f->ret->t1);
+	f->ret->t0 = H;
+	f->ret->t1 = H;
+
+	if(secp256k1_keygen(priv, pub) != 0)
+		return;
+
+	f->ret->t0 = mem2array(priv, 32);
+	f->ret->t1 = mem2array(pub, 65);
+	secureZero(priv, 32);
+}
+
+void
+Keyring_secp256k1_pubkey(void *fp)
+{
+	F_Keyring_secp256k1_pubkey *f;
+	uchar pub[65];
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->priv == H || f->priv->len != 32)
+		error(exBadKey);
+
+	secp256k1_pubkey(pub, f->priv->data);
+	*f->ret = mem2array(pub, 65);
+}
+
+void
+Keyring_secp256k1_sign(void *fp)
+{
+	F_Keyring_secp256k1_sign *f;
+	uchar sig[65];
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->priv == H || f->priv->len != 32)
+		error(exBadKey);
+	if(f->hash == H || f->hash->len == 0)
+		error(exBadDigest);
+
+	if(secp256k1_sign(sig, f->priv->data, f->hash->data, f->hash->len) != 0)
+		return;
+
+	*f->ret = mem2array(sig, 65);
+}
+
+void
+Keyring_secp256k1_recover(void *fp)
+{
+	F_Keyring_secp256k1_recover *f;
+	uchar pub[65];
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->hash == H || f->hash->len == 0)
+		error(exBadDigest);
+	if(f->sig == H || f->sig->len != 65)
+		return;
+
+	if(secp256k1_recover(pub, f->hash->data, f->hash->len, f->sig->data) != 0)
+		return;
+
+	*f->ret = mem2array(pub, 65);
+}
+
+/*
+ *  Keccak-256 (Ethereum variant, domain separator 0x01)
+ */
+void
+Keyring_keccak256(void *fp)
+{
+	F_Keyring_keccak256 *f;
+	uchar *cbuf;
+	int n;
+
+	f = fp;
+	*f->ret = 0;
+
+	if(f->buf == H || f->digest == H)
+		return;
+
+	n = f->n;
+	if(n > f->buf->len)
+		n = f->buf->len;
+	if(f->digest->len < 32)
+		error(exBadDigest);
+
+	cbuf = f->buf->data;
+	keccak256(cbuf, n, f->digest->data);
+	*f->ret = 32;
+}
+
+/*
+ *  Ed25519 raw sign (RFC 8032)
+ *  Takes 32-byte seed + message, returns 64-byte signature
+ */
+void
+Keyring_ed25519_sign(void *fp)
+{
+	F_Keyring_ed25519_sign *f;
+	uchar sig[64];
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->seed == H || f->seed->len != 32)
+		return;
+
+	ed25519_raw_sign(sig, f->seed->data,
+		f->msg == H ? nil : f->msg->data,
+		f->msg == H ? 0 : f->msg->len);
+
+	*f->ret = mem2array(sig, 64);
+}
+
+/*
+ *  Ed25519 raw verify (RFC 8032)
+ *  Takes 32-byte pk + message + 64-byte signature, returns 0/1
+ */
+void
+Keyring_ed25519_verify(void *fp)
+{
+	F_Keyring_ed25519_verify *f;
+
+	f = fp;
+	*f->ret = 0;
+
+	if(f->pk == H || f->pk->len != 32)
+		return;
+	if(f->sig == H || f->sig->len != 64)
+		return;
+
+	*f->ret = ed25519_raw_verify(f->sig->data, f->pk->data,
+		f->msg == H ? nil : f->msg->data,
+		f->msg == H ? 0 : f->msg->len);
+}
+
+/*
+ *  ML-KEM (FIPS 203) post-quantum key encapsulation
+ */
+void
+Keyring_mlkem768_keygen(void *fp)
+{
+	F_Keyring_mlkem768_keygen *f;
+	uchar pk[MLKEM768_PKLEN], sk[MLKEM768_SKLEN];
+
+	f = fp;
+	destroy(f->ret->t0);
+	destroy(f->ret->t1);
+	f->ret->t0 = H;
+	f->ret->t1 = H;
+
+	mlkem768_keygen(pk, sk);
+
+	f->ret->t0 = mem2array(pk, MLKEM768_PKLEN);
+	f->ret->t1 = mem2array(sk, MLKEM768_SKLEN);
+	secureZero(sk, MLKEM768_SKLEN);
+}
+
+void
+Keyring_mlkem768_encaps(void *fp)
+{
+	F_Keyring_mlkem768_encaps *f;
+	uchar ct[MLKEM768_CTLEN], ss[MLKEM_SSLEN];
+
+	f = fp;
+	destroy(f->ret->t0);
+	destroy(f->ret->t1);
+	f->ret->t0 = H;
+	f->ret->t1 = H;
+
+	if(f->pk == H || f->pk->len != MLKEM768_PKLEN)
+		error(exBadKey);
+
+	mlkem768_encaps(ct, ss, f->pk->data);
+
+	f->ret->t0 = mem2array(ct, MLKEM768_CTLEN);
+	f->ret->t1 = mem2array(ss, MLKEM_SSLEN);
+	secureZero(ss, MLKEM_SSLEN);
+}
+
+void
+Keyring_mlkem768_decaps(void *fp)
+{
+	F_Keyring_mlkem768_decaps *f;
+	uchar ss[MLKEM_SSLEN];
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->sk == H || f->sk->len != MLKEM768_SKLEN)
+		error(exBadKey);
+	if(f->ct == H || f->ct->len != MLKEM768_CTLEN)
+		error(exBadKey);
+
+	mlkem768_decaps(ss, f->ct->data, f->sk->data);
+
+	*f->ret = mem2array(ss, MLKEM_SSLEN);
+	secureZero(ss, MLKEM_SSLEN);
+}
+
+void
+Keyring_mlkem1024_keygen(void *fp)
+{
+	F_Keyring_mlkem1024_keygen *f;
+	uchar pk[MLKEM1024_PKLEN], sk[MLKEM1024_SKLEN];
+
+	f = fp;
+	destroy(f->ret->t0);
+	destroy(f->ret->t1);
+	f->ret->t0 = H;
+	f->ret->t1 = H;
+
+	mlkem1024_keygen(pk, sk);
+
+	f->ret->t0 = mem2array(pk, MLKEM1024_PKLEN);
+	f->ret->t1 = mem2array(sk, MLKEM1024_SKLEN);
+	secureZero(sk, MLKEM1024_SKLEN);
+}
+
+void
+Keyring_mlkem1024_encaps(void *fp)
+{
+	F_Keyring_mlkem1024_encaps *f;
+	uchar ct[MLKEM1024_CTLEN], ss[MLKEM_SSLEN];
+
+	f = fp;
+	destroy(f->ret->t0);
+	destroy(f->ret->t1);
+	f->ret->t0 = H;
+	f->ret->t1 = H;
+
+	if(f->pk == H || f->pk->len != MLKEM1024_PKLEN)
+		error(exBadKey);
+
+	mlkem1024_encaps(ct, ss, f->pk->data);
+
+	f->ret->t0 = mem2array(ct, MLKEM1024_CTLEN);
+	f->ret->t1 = mem2array(ss, MLKEM_SSLEN);
+	secureZero(ss, MLKEM_SSLEN);
+}
+
+void
+Keyring_mlkem1024_decaps(void *fp)
+{
+	F_Keyring_mlkem1024_decaps *f;
+	uchar ss[MLKEM_SSLEN];
+	void *r;
+
+	f = fp;
+	r = *f->ret;
+	*f->ret = H;
+	destroy(r);
+
+	if(f->sk == H || f->sk->len != MLKEM1024_SKLEN)
+		error(exBadKey);
+	if(f->ct == H || f->ct->len != MLKEM1024_CTLEN)
+		error(exBadKey);
+
+	mlkem1024_decaps(ss, f->ct->data, f->sk->data);
+
+	*f->ret = mem2array(ss, MLKEM_SSLEN);
+	secureZero(ss, MLKEM_SSLEN);
 }

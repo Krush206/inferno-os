@@ -13,13 +13,12 @@
 #include	"dat.h"
 #include	"fns.h"
 #include	"error.h"
+#include <fpuctl.h>
 
 #include <semaphore.h>
+#include <pthread.h>
 
 #include	<raise.h>
-
-/* For dynamic linking init/fini code that needs malloc */
-void (*coherence)(void) = nofence;
 
 /* glibc 2.3.3-NTPL messes up getpid() by trying to cache the result, so we'll do it ourselves */
 #include	<sys/syscall.h>
@@ -157,6 +156,28 @@ osreboot(char *file, char **argv)
 	error("reboot failure");
 }
 
+#ifdef GUI_SDL3
+/*
+ * Worker thread wrapper for emuinit when using SDL3 GUI.
+ * The main thread must remain free for sdl3_mainloop().
+ */
+static void*
+emuinit_worker(void *arg)
+{
+	char *imod = (char*)arg;
+	Proc *p;
+
+	/* Create Proc for this worker thread */
+	p = newproc();
+	kprocsetup(p);
+
+	/* Now emuinit can use 'up' */
+	emuinit(imod);
+
+	return NULL;  /* Never reached - emuinit never returns */
+}
+#endif
+
 void
 libinit(char *imod)
 {
@@ -219,7 +240,24 @@ libinit(char *imod)
 	p->env->uid = getuid();
 	p->env->gid = getgid();
 
+#ifdef GUI_SDL3
+	/* SDL3: Spawn emuinit on worker thread so main thread can run sdl3_mainloop() */
+	{
+		pthread_t worker_thread;
+
+		if(pthread_create(&worker_thread, NULL, emuinit_worker, imod) != 0)
+			panic("libinit: pthread_create failed for emuinit worker");
+
+		pthread_detach(worker_thread);
+
+		/* Give worker thread a moment to start */
+		usleep(50000);  /* 50ms */
+	}
+	/* Return to main() which will call sdl3_mainloop() */
+#else
+	/* Headless: Run emuinit on main thread (never returns) */
 	emuinit(imod);
+#endif
 }
 
 int
@@ -231,8 +269,10 @@ readkbd(void)
 	n = read(0, buf, sizeof(buf));
 	if(n < 0)
 		print("keyboard close (n=%d, %s)\n", n, strerror(errno));
-	if(n <= 0)
+	if(n <= 0) {
+		qhangup(kbdq, nil);
 		pexit("keyboard thread", 0);
+	}
 
 	switch(buf[0]) {
 	case '\r':

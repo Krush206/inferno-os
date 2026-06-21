@@ -27,6 +27,18 @@ String	snil;			/* String known to be zero length */
 #define SH(r)	*((SHORT*)(R.r))
 #define SR(r)	*((SREAL*)(R.r))
 
+/*
+ * PC alignment check: valid for fixed-width ISAs (ARM64, ARM, MIPS, SPARC,
+ * Power — all 4-byte instructions) but not for x86/AMD64 where instructions
+ * are variable-length (1–15 bytes) and JIT code addresses have no alignment
+ * guarantee.
+ */
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+#define PC_MISALIGNED(pc)	0
+#else
+#define PC_MISALIGNED(pc)	((ulong)(pc) & 3)
+#endif
+
 OP(runt) {}
 OP(negf) { F(d) = -F(s); }
 OP(jmp)  { JMP(d); }
@@ -52,13 +64,13 @@ OP(subb) { B(d) = B(m) - B(s); }
 OP(subw) { W(d) = W(m) - W(s); }
 OP(subl) { V(d) = V(m) - V(s); }
 OP(subf) { F(d) = F(m) - F(s); }
-OP(divb) { B(d) = B(m) / B(s); }
-OP(divw) { W(d) = W(m) / W(s); }
-OP(divl) { V(d) = V(m) / V(s); }
+OP(divb) { if(B(s) == 0) error(exZdiv); B(d) = B(m) / B(s); }
+OP(divw) { if(W(s) == 0) error(exZdiv); W(d) = W(m) / W(s); }
+OP(divl) { if(V(s) == 0) error(exZdiv); V(d) = V(m) / V(s); }
 OP(divf) { F(d) = F(m) / F(s); }
-OP(modb) { B(d) = B(m) % B(s); }
-OP(modw) { W(d) = W(m) % W(s); }
-OP(modl) { V(d) = V(m) % V(s); }
+OP(modb) { if(B(s) == 0) error(exZdiv); B(d) = B(m) % B(s); }
+OP(modw) { if(W(s) == 0) error(exZdiv); W(d) = W(m) % W(s); }
+OP(modl) { if(V(s) == 0) error(exZdiv); V(d) = V(m) % V(s); }
 OP(mulb) { B(d) = B(m) * B(s); }
 OP(mulw) { W(d) = W(m) * W(s); }
 OP(mull) { V(d) = V(m) * V(s); }
@@ -360,22 +372,49 @@ OP(mframe)
 	Modlink *ml;
 	int o;
 
+	if(cflag > 3)
+		fprint(2, "mframe ENTER: R.s=%p R.d=%p R.m=%p\n", R.s, R.d, R.m);
+	if(cflag > 1) {
+		print("mframe ENTRY: R.s=%p *R.s=%p R.m=%p R.MP=%p R.M=%p R.FP=%p\n",
+			R.s, R.s ? *(void**)R.s : nil, R.m, R.MP, R.M, R.FP);
+		/* Show what's at various FP offsets to diagnose indirect operand issues */
+		print("mframe FP offsets: +80=%p +88=%p +96=%p +112=%p\n",
+			*(void**)((uchar*)R.FP + 80),
+			*(void**)((uchar*)R.FP + 88),
+			*(void**)((uchar*)R.FP + 96),
+			*(void**)((uchar*)R.FP + 112));
+		/* Check if R.s matches any expected computation */
+		if(R.s && (uchar*)R.s >= R.FP && (uchar*)R.s < R.FP + 256)
+			print("  R.s is WITHIN frame! offset=%ld\n", (long)((uchar*)R.s - R.FP));
+	}
+
 	ml = *(Modlink**)R.s;
-	if(ml == H)
+	if(ml == H) {
 		error(exModule);
+	}
 
 	o = W(m);
+	if(cflag > 1)
+		print("mframe: o=%d ml=%p ml->nlinks=%d ml->m=%p\n", o, ml, ml->nlinks, ml->m);
 	if(o >= 0){
-		if(o >= ml->nlinks)
+		if(o >= ml->nlinks) {
+			print("mframe ERROR: o=%d >= nlinks=%d\n", o, ml->nlinks);
 			error("invalid mframe");
+		}
 		t = ml->links[o].frame;
+		if(cflag > 1)
+			print("mframe: links[%d].frame=%p\n", o, t);
 	}
 	else
 		t = ml->m->ext[-o-1].frame;
+	if(cflag > 1)
+		print("mframe: t=%p about to access t->size\n", t);
 	nsp = R.SP + t->size;
 	if(nsp >= R.TS) {
 		R.s = t;
 		extend();
+		if(cflag > 3)
+			fprint(2, "mframe(extend): R.d=%p stored=%p\n", R.d, R.s);
 		T(d) = R.s;
 		return;
 	}
@@ -385,6 +424,8 @@ OP(mframe)
 	f->mr = nil;
 	if (t->np)
 		initmem(t, f);
+	if(cflag > 3)
+		fprint(2, "mframe: R.d=%p stored=%p\n", R.d, f);
 	T(d) = f;
 }
 void
@@ -392,13 +433,13 @@ acheck(int tsz, int sz)
 {
 	if(sz < 0)
 		error(exNegsize);
-	/* test for overflow; assumes sz >>> tsz */
-	if((int)(sizeof(Array) + sizeof(Heap) + tsz*sz) < sz && tsz != 0)
+	/* check for overflow in tsz*sz using division */
+	if(tsz != 0 && (ulong)sz > ((ulong)~0 - sizeof(Array) - sizeof(Heap)) / (ulong)tsz)
 		error(exHeap);
 }
 OP(newa)
 {
-	int sz;
+	int sz, nbytes;
 	Type *t;
 	Heap *h;
 	Array *a, *at, **ap;
@@ -406,7 +447,8 @@ OP(newa)
 	t = R.M->type[W(m)];
 	sz = W(s);
 	acheck(t->size, sz);
-	h = nheap(sizeof(Array) + (t->size*sz));
+	nbytes = t->size * sz;		/* element storage; acheck() bounded it */
+	h = nheap(sizeof(Array) + nbytes);
 	h->t = &Tarray;
 	Tarray.ref++;
 	a = H2D(Array*, h);
@@ -414,6 +456,21 @@ OP(newa)
 	a->len = sz;
 	a->root = H;
 	a->data = (uchar*)a + sizeof(Array);
+	/*
+	 * Zero the element storage.  Limbo specifies that array elements are
+	 * created with their zero value, but nheap() returns recycled heap
+	 * memory that still holds whatever the previous owner left behind.
+	 * For pointer-element types initarray() rewrites every slot to H, but
+	 * for value types (byte, int, real, ...) it is a no-op (t->np==0), so
+	 * without this memset such arrays would expose stale bytes from freed
+	 * objects -- a correctness bug (e.g. an uninitialised cipher IV) and an
+	 * information-disclosure risk.  Fresh arena memory is zero, which is why
+	 * the gap only shows up once a block is reused.  This makes INEWA match
+	 * INEWAZ; the compiler's -z (arrayz) flag is now redundant for safety.
+	 * nbytes is exactly the size handed to nheap() above, so this never
+	 * writes past the element storage.
+	 */
+	memset(a->data, 0, nbytes);
 	initarray(t, a);
 
 	ap = R.d;
@@ -523,6 +580,8 @@ OP(icase)
 	v = W(s);
 	t = (WORD*)((WORD)R.d + IBY2WD);
 	n = t[-1];
+	if(n < 0)
+		n = -n - 1;
 	d = t[n*3];
 
 	while(n > 0) {
@@ -542,6 +601,10 @@ OP(icase)
 	}
 	if(R.M->compiled) {
 		R.PC = (Inst*)d;
+		if(PC_MISALIGNED(R.PC))
+			print("BUG: icase: misaligned PC=%p d=%lx module=%s prog=%p\n",
+				R.PC, (ulong)d, R.M->m ? R.M->m->name : "?",
+				(void*)R.M->m->prog);
 		return;
 	}
 	R.PC = R.M->prog + d;
@@ -554,6 +617,8 @@ OP(casel)
 	v = V(s);
 	t = (WORD*)((WORD)R.d + 2*IBY2WD);
 	n = t[-2];
+	if(n < 0)
+		n = -n - 1;
 	d = t[n*6];
 
 	while(n > 0) {
@@ -573,6 +638,10 @@ OP(casel)
 	}
 	if(R.M->compiled) {
 		R.PC = (Inst*)d;
+		if(PC_MISALIGNED(R.PC))
+			print("BUG: casel: misaligned PC=%p d=%lx module=%s prog=%p\n",
+				R.PC, (ulong)d, R.M->m ? R.M->m->name : "?",
+				(void*)R.M->m->prog);
 		return;
 	}
 	R.PC = R.M->prog + d;
@@ -581,10 +650,12 @@ OP(casec)
 {
 	WORD *l, *t, *e, n, n2, r;
 	String *sl, *sh, *sv;
-	
+
 	sv = S(s);
 	t = (WORD*)((WORD)R.d + IBY2WD);
 	n = t[-1];
+	if(n < 0)
+		n = -n - 1;
 	e = t + n*3;
 	if(n > 2){
 		while(n > 0){
@@ -632,6 +703,10 @@ OP(casec)
 found:
 	if(R.M->compiled) {
 		R.PC = (Inst*)*t;
+		if(PC_MISALIGNED(R.PC))
+			print("BUG: casec: misaligned PC=%p t=%p *t=%lx module=%s prog=%p\n",
+				R.PC, t, (ulong)*t, R.M->m ? R.M->m->name : "?",
+				(void*)R.M->m->prog);
 		return;
 	}
 	R.PC = R.M->prog + t[0];
@@ -643,6 +718,10 @@ OP(igoto)
 	t = (WORD*)((WORD)R.d + (W(s) * IBY2WD));
 	if(R.M->compiled) {
 		R.PC = (Inst*)t[0];
+		if(PC_MISALIGNED(R.PC))
+			print("BUG: igoto: misaligned PC=%p module=%s prog=%p\n",
+				R.PC, R.M->m ? R.M->m->name : "?",
+				(void*)R.M->m->prog);
 		return;
 	}
 	R.PC = R.M->prog + t[0];
@@ -695,11 +774,34 @@ OP(ret)
 	R.FP = f->fp;
 	if(R.FP == nil) {
 		R.FP = (uchar*)f;
+#ifdef _WIN32
+		/*
+		 * On Windows x64, longjmp uses RtlUnwindEx which requires
+		 * stack unwind info (.pdata/.xdata) for every frame on the
+		 * stack.  JIT code has no unwind tables, so longjmp through
+		 * JIT frames crashes.  Instead, set p->kill so the next
+		 * xec() call raises the error from C code (which has proper
+		 * unwind info), and set R.t to exit comvec via TCHECK.
+		 */
+		if(R.M->compiled) {
+			currun()->kill = "";
+			R.t = 1;
+			return;
+		}
+#endif
 		error("");
 	}
 	R.SP = (uchar*)f;
 	R.PC = f->lr;
 	m = f->mr;
+
+	if(R.M->compiled && m != nil && m->compiled && PC_MISALIGNED(R.PC)) {
+		print("BUG: ret: misaligned f->lr=%p\n", R.PC);
+		print("  returning to %s compiled=%d prog=%p\n",
+			m->m ? m->m->name : "?", m->compiled,
+			m->m ? (void*)m->m->prog : nil);
+		print("  from %s\n", R.M->m ? R.M->m->name : "?");
+	}
 
 	if(f->t == nil)
 		unextend(f);
@@ -762,6 +864,10 @@ OP(mcall)
 	Modlink *ml;
 	int o;
 
+	if(cflag > 1)
+		print("mcall ENTRY: R.d=%p *R.d=%p R.m=%p R.FP=%p\n",
+			R.d, R.d ? *(void**)R.d : nil, R.m, R.FP);
+
 	ml = *(Modlink**)R.d;
 	if(ml == H)
 		error(exModule);
@@ -770,22 +876,40 @@ OP(mcall)
 	f->fp = R.FP;
 	f->mr = R.M;
 
+	if(cflag > 1)
+		print("mcall: f=%p f->fp=%p (saved R.FP)\n", f, f->fp);
+
 	R.FP = (uchar*)f;
+	if(cflag > 1)
+		print("mcall: set R.FP=%p (new frame)\n", R.FP);
 	R.M = ml;
 	h = D2H(ml);
 	h->ref++;
 
 	o = W(m);
+	if(cflag > 1)
+		print("mcall: o=%d ml->prog=%p ml->compiled=%d ml->nlinks=%d\n",
+			o, ml->prog, ml->compiled, ml->nlinks);
 	if(o >= 0)
 		l = &ml->links[o].u;
 	else
 		l = &ml->m->ext[-o-1].u;
+	if(cflag > 1)
+		print("mcall: l=%p l->pc=%p (as void*=%p)\n", l, l->pc, (void*)l->pc);
 	if(ml->prog == nil) {
+		if(cflag > 1)
+			print("mcall: calling built-in runt=%p R.PC_before=%p\n", l->runt, R.PC);
 		l->runt(f);
+		if(cflag > 1)
+			print("mcall: built-in returned R.PC_after=%p\n", R.PC);
 		h->ref--;
 		R.M = f->mr;
 		R.SP = R.FP;
+		if(cflag > 1)
+			print("mcall: before restore: R.FP=%p f->fp=%p\n", R.FP, f->fp);
 		R.FP = f->fp;
+		if(cflag > 1)
+			print("mcall: after restore: R.FP=%p\n", R.FP);
 		if(f->t == nil)
 			unextend(f);
 		else if (f->t->np)
@@ -794,11 +918,21 @@ OP(mcall)
 		if(p->kill != nil)
 			error(p->kill);
 		R.t = 0;
+		if(cflag > 1)
+			print("mcall: built-in done R.PC_final=%p R.t=0 R.FP=%p\n", R.PC, R.FP);
 		return;
 	}
 	R.MP = R.M->MP;
 	R.PC = l->pc;
 	R.t = 1;
+
+	if(PC_MISALIGNED(R.PC)) {
+		print("mcall: BAD PC=%p module=%s o=%d compiled=%d\n",
+			R.PC, R.M->m ? R.M->m->name : "?", o, R.M->compiled);
+		print("  caller=%s l=%p l->pc=%p\n",
+			f->mr->m ? f->mr->m->name : "?", l, l->pc);
+		error("misaligned PC in mcall");
+	}
 
 	if(f->mr->compiled != R.M->compiled)
 		R.IC = 1;
@@ -1305,6 +1439,8 @@ OP(eclr)
 }
 OP(badop)
 {
+	fprint(2, "BADOP: PC=%p, opcode=%d at instruction %p\n",
+		(void*)R.PC, R.PC->op, (void*)R.PC);
 	error(exOp);
 }
 OP(iraise)
@@ -1683,16 +1819,53 @@ xec(Prog *p)
 		error(m);
 	}
 
-// print("%lux %lux %lux %lux %lux\n", (ulong)&R, R.xpc, R.FP, R.MP, R.PC);
-
-	if(R.M->compiled)
+	if(R.M->compiled) {
+		if(PC_MISALIGNED(R.PC)) {
+			Frame *xf = (Frame*)R.FP;
+			print("BUG: misaligned R.PC=%p before comvec\n", R.PC);
+			print("  module=%s compiled=%d prog=%p\n",
+				R.M->m ? R.M->m->name : "?", R.M->compiled,
+				R.M->m ? (void*)R.M->m->prog : nil);
+			print("  R.FP=%p R.MP=%p R.M=%p\n", R.FP, R.MP, (void*)R.M);
+			if(xf != nil) {
+				print("  frame: lr=%p fp=%p mr=%p\n",
+					xf->lr, xf->fp, (void*)xf->mr);
+				if(xf->mr != nil && xf->mr->m != nil)
+					print("  caller: %s compiled=%d prog=%p\n",
+						xf->mr->m->name, xf->mr->compiled,
+						(void*)xf->mr->m->prog);
+			}
+			error("misaligned PC in compiled module");
+		}
 		comvec();
-	else do {
+	}
+	else {
+		do {
 		dec[R.PC->add]();
 		op = R.PC->op;
 		R.PC++;
 		optab[op]();
 	} while(--R.IC != 0);
+	}
 
+	if(R.M->compiled && PC_MISALIGNED(R.PC)) {
+		print("BUG: misaligned R.PC=%p AFTER comvec return\n", R.PC);
+		print("  module=%s prog=%p\n",
+			R.M->m ? R.M->m->name : "?",
+			R.M->m ? (void*)R.M->m->prog : nil);
+		print("  R.FP=%p R.MP=%p R.t=%d R.IC=%d\n",
+			R.FP, R.MP, R.t, R.IC);
+		{
+			Frame *xf = (Frame*)R.FP;
+			if(xf != nil) {
+				print("  frame: lr=%p fp=%p mr=%p\n",
+					xf->lr, xf->fp, (void*)xf->mr);
+				if(xf->mr != nil && xf->mr->m != nil)
+					print("  frame.mr: %s compiled=%d prog=%p\n",
+						xf->mr->m->name, xf->mr->compiled,
+						(void*)xf->mr->m->prog);
+			}
+		}
+	}
 	p->R = R;
 }

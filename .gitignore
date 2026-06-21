@@ -1,92 +1,307 @@
-*.[8qkv5967o]
+# Windows image file caches
+Thumbs.db
+ehthumbs.db
+
+# Folder config file
+Desktop.ini
+
+# Recycle Bin used on file shares
+$RECYCLE.BIN/
+
+# Windows Installer files
+*.cab
+*.msi
+*.msm
+*.msp
+
+# Windows shortcuts
+*.lnk
+
+# =========================
+# Operating System Files
+# =========================
+
+# OSX
+# =========================
+
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+
+# Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+*.caeracme
 *.obj
-*.patch
-*.diff
-*.log
-*.orig
-[8qkv965o].out
-[8qkv965o].emu
-obj.out
-obj.map
-vc*.pdb
-y.output
-y.tab.[ch]
-y.debug
+*.pdb
+sys/emu/Nt/iacme.map
 *.a
-emu/*/*.root.[ch]
+tmp/plumb.log
+sys/emu/Nt/iacme.exe
+*.map
+sys/emu/Nt/icell.exe
+.hgignore
+iacme.exe
+*.o
+
+o.emu
+o.*
+services/httpd/httpd.log
+**/Dockerfile
+!/Dockerfile
+!.clusterfuzzlite/Dockerfile
+
+# Compiled Limbo bytecode in source tree (build artifacts)
+# Note: dis/*.dis (runtime files) are TRACKED, matching upstream Inferno OS
+/appl/**/*.dis
+/appl/**/*.sbl
+# Also exclude tests build artifacts
+/tests/**/*.dis
+/tests/**/*.sbl
+/tests/.server-b.log
+/tests/.test-*.log
+# Root-level build artifacts (stray compiles)
+/*.dis
+/*.sbl
+# Debug symbols in runtime dis tree
+/dis/**/*.sbl
+# Compiled test bytecode in dis tree
+/dis/tests/*.dis
+/dis/lib/testing_test.dis
+# CI/local test output
+test-output.txt
+# Xenith plugin build artifacts (built from appl/xenith/xenith/)
+/xenith/dis/
+.env
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Veltro API keys (secrets)
+lib/veltro/keys/
+
+# Site-local NDB config (contains private IPs/hostnames, API URLs, model choices)
+lib/ndb/local
+lib/ndb/llm
+
+# =========================
+# Build Artifacts
+# =========================
+
+# Host platform binaries and libraries
+Linux/*/bin/*
+Linux/*/lib/*
+MacOSX/*/bin/*
+MacOSX/*/lib/*
+Nt/*/bin/*
+Nt/*/lib/*
+iOS/*/bin/*
+iOS/*/lib/*
+# iOS app bundle (assembled by build-ios-app.sh; staged Inferno root + binary)
+iOS/*/*.app/
+emu/iOS/app/*.o
+# iOS device app: staged root + generated Xcode project (from project.yml)
+iOS/*/appbundle/
+/InferNode.xcodeproj/
+
+# Emulator binaries (built locally)
+emu/*/o.emu
+emu/*/o.*
+emu/*/InferNode
+emu/*/InferNode.exe
+emu/*/SDL3.dll
+
+# Build logs and transient artefacts at repo root
+.build-*.log
+.rebase-backup/
+InferNode-windows-amd64.zip
+
+# Bootstrap mk build output
+utils/mk/mk
+
+# Generated emulator source
+emu/*/emu.c
+emu/*/emu.root.c
+emu/*/emu.root.h
 emu/*/errstr.h
 emu/*/srv.h
 emu/*/srvm.h
-[A-Z]*/*/bin/?[acl]
-[A-Z]*/*/bin/5coff
-[A-Z]*/*/bin/5cv
-[A-Z]*/*/bin/acid
-[A-Z]*/*/bin/asm
-[A-Z]*/*/bin/data2s
-[A-Z]*/*/bin/emu
-[A-Z]*/*/bin/limbo
-Linux/*/bin/*
-Nt/*/bin/?[acl].exe
-Nt/*/bin/5coff.exe
-Nt/*/bin/5cv.exe
-Nt/*/bin/acid.exe
-Nt/*/bin/asm.exe
-Nt/*/bin/data2s.exe
-Nt/*/bin/emu.exe
-Nt/*/bin/limbo.exe
-Nt/*/bin/ftl.exe
-Nt/*/bin/iar.exe
-Nt/*/bin/idea.exe
-Nt/*/bin/inm.exe
-Nt/*/bin/kprof.exe
-Nt/*/bin/ksize.exe
-Nt/*/bin/kstrip.exe
-Nt/*/bin/md5sum.exe
-Nt/*/bin/mkppcimage.exe
-Nt/*/bin/ms2.exe
-Nt/*/bin/ndate.exe
-Nt/*/bin/ntsrv.exe
-Nt/*/bin/sqz.exe
-Nt/*/bin/srclist.exe
-Nt/*/bin/styxtest.exe
-emu/Nt/*.map
-emu/Nt/*.exe
-keydb/keys
-keydb/countersigned
-keydb/signed
-keydb/signerkey
-tmp/*
-*.rej
 
-syntax: regexp
-^dis/.*.dis
-^dis/*/.*.dis
-^appl/.*.dis
-^appl/.*.sbl
-^acme/dis/.*.dis
-^acme/*/.*.dis
-^tmp/.*
-^contrib/.*
-^usr/\.*
-^grid/.*
-^libinterp/cryptmod.h
-^libinterp/drawmod.h
-^libinterp/freetypemod.h
-^libinterp/ipintsmod.h
-^libinterp/keyring.h
-^libinterp/keyringif.h
-^libinterp/loadermod.h
-^libinterp/mathmod.h
-^libinterp/runt.h
-^libinterp/sysmod.h
-^libinterp/tkmod.h
-^limbo/runt.h
-^libinterp/drawmod.h
-^libinterp/freetypemod.h
-^libinterp/keyring.h
-^libinterp/loadermod.h
-^libinterp/mathmod.h
-^libinterp/runt.h
-^libinterp/sysmod.h
-^libinterp/tkmod.h
-^limbo/runt.h
+# Headless test-emu variant (built locally via `mk -f mkfile-g CONF=emut`):
+# config + generated sources, analogous to the emu.* entries above.
+emu/*/emut
+emu/*/emut.c
+emu/*/emut.root.c
+emu/*/emut.root.h
+
+# Local JIT/9P reproduction scratch (ad-hoc probes, not part of the build)
+/probe/
+
+# Generated interpreter headers
+libinterp/*.h
+
+# Parser generated files
+limbo/y.tab.c
+limbo/y.tab.h
+
+# Scratch compiled test files (covered by /appl/**/*.dis and /tests/**/*.dis above)
+
+Linux/arm/bin/data2s
+emu/Linux/emu.c
+emu/Linux/emu.root.c
+emu/Linux/emu.root.h
+emu/Linux/errstr.h
+emu/Linux/srv.h
+emu/Linux/srvm.h
+libinterp/cryptmod.h
+libinterp/drawmod.h
+libinterp/ipintsmod.h
+libinterp/keyring.h
+libinterp/keyringif.h
+libinterp/mathmod.h
+libinterp/runt.h
+libinterp/sysmod.h
+limbo/y.tab.c
+limbo/y.tab.h
+Linux/arm/bin/*
+Linux/arm64/bin/*
+Linux/amd64/bin/*
+
+
+# Benchmark build artifacts and results
+benchmarks/_build/
+benchmarks/_results/
+
+# GoDis compiled binary
+tools/godis/godis
+
+# Inferno temp files and runtime data
+tmp/*.pdfi*
+tmp/plumb.log
+tmp/.veltro/
+
+# Veltro runtime working dir (subagent trajectory logs etc. written when
+# running veltro tests under emu); not source.
+usr/inferno/veltro/
+
+# Stale build artifacts placed in wrong location (authoritative copies are in dis/)
+dis/cmd/luci*.dis
+dis/cmd/luci*.sbl
+
+# Stray files
+fprint'
+
+# Windows build generated files
+emu/Nt/emu-config.c
+emu/Nt/emu-gui-config.c
+emu/Nt/SDL3.dll
+limbo/incpath.h
+utils/mk/rootpath.h
+SDL3-dev/
+emu_stderr.txt
+input.txt
+nul
+
+# Runtime / scratch directories
+dev/
+tmp/
+hello-test/
+
+# Root-level generated headers (stray builds)
+/srv.h
+/srvm.h
+
+# Inferno mount points (should never contain real files)
+tool/
+
+# SPIN model checker generated files
+formal-verification/spin/pan
+formal-verification/spin/pan.*
+formal-verification/spin/*.trail
+formal-verification/spin/_spin_nvr.tmp
+
+# CBMC generated logs and outputs
+formal-verification/cbmc/*.log
+formal-verification/cbmc/Bounds
+formal-verification/cbmc/Overflow
+formal-verification/cbmc/(fd
+formal-verification/cbmc/(mnthash).log
+formal-verification/cbmc/allocation).log
+mnt/
+
+# Local test data
+usr/inferno/test-pdfs/
+
+# Secstore credentials (PAK verifiers + encrypted key blobs)
+usr/inferno/secstore/*/
+
+# User state markers (written at runtime, not distribution defaults)
+lib/veltro/welcome_shown
+lib/veltro/tour_offered
+
+dis/mermaid_test.dis
+
+# Runtime overlay root — populated by emu at boot, never tracked
+n/local/
+
+# Phase 1c (INFR-110) APK build artefacts. The Inferno-side mkfile
+# chain stages these into the Android-app tree at build time; they
+# are produced fresh by ./build-android-apk.sh on every invocation.
+android-app/app/src/main/jniLibs/arm64-v8a/libemu.so
+android-app/app/src/main/jniLibs/arm64-v8a/libSDL3.so
+android-app/app/src/main/assets/inferno-root/
+emu/Android/libemu.so
+emu/Android/o.emu
+build-android-apk.ndk.log
+
+# Gradle local state. The wrapper jar + properties + the gradlew
+# scripts are tracked (they are the build entry point); .gradle/ and
+# build/ are per-build caches that don't belong in git. local.properties
+# carries the host's sdk.dir, which is per-machine.
+android-app/.gradle/
+android-app/build/
+android-app/app/build/
+android-app/local.properties
+
+# Release signing secrets — NEVER commit. The upload keystore and the
+# properties file naming it stay on the signer's machine / in CI secrets.
+# keystore.properties.example is the tracked template.
+android-app/keystore.properties
+*.jks
+*.keystore
+
+# Multi-arch APK build artefacts (INFR-67 x86_64 NDK target).
+android-app/app/src/main/jniLibs/x86_64/libemu.so
+android-app/app/src/main/jniLibs/x86_64/libSDL3.so
+build-android-apk.ndk-arm64-v8a.log
+build-android-apk.ndk-x86_64.log
+
+# node interop harness artifacts (generated; never commit keys)
+usr/inferno/keyring/interop-*
+tmp/interop_pulled_*
+dis/interop_node_server.dis
+dis/interop_node_client.dis
+/dis/tests/stress/
+/dis/tests/bench/
+
+# Local video/image capture from codec testing (kept on disk, never committed)
+*.m1v
+*.y4m
+scratchrun/
+
+# 2FA POC scratch — belongs with the YubiKey workstream, not the main tree
+tools/2fa-poc/

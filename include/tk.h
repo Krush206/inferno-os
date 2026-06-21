@@ -557,15 +557,28 @@ struct TkCtxt
 	void*	extn;
 };
 
+/*
+ * Limbo_Rect: 32-byte rectangle matching Limbo's Draw_Rect layout
+ * Each coordinate is stored as a 64-bit WORD (Limbo int = 64-bit)
+ */
+typedef struct Limbo_Rect Limbo_Rect;
+struct Limbo_Rect {
+	vlong	min_x;
+	vlong	min_y;
+	vlong	max_x;
+	vlong	max_y;
+};
+
 struct TkTop
 {
 	void*	dd;	/* really Draw_Display */
 	void*	wreq;	/* really chan of string */
 	void*	di;		/* really Draw_Image* */
 	void*	wmctxt;	/* really Draw_Wmcontext */
-	Rectangle	screenr;	/* XXX sleazy equiv to Draw_Rect, but what else? */
+	Limbo_Rect	screenr;	/* 32 bytes, matching Limbo's Draw_Rect layout */
 
 	/* Private from here on */
+	Rectangle	c_screenr;	/* C format copy for internal libtk use */
 	TkCtxt*		ctxt;
 	Display*	display;
 	Tk*		root;			/* list of all objects, linked by siblings; first object is "." */

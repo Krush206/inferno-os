@@ -77,8 +77,9 @@ onscreen(top: ref Tk->Toplevel, how: string)
 {
 	if(how == nil)
 		how = "place";
-	wmctl(top, sys->sprint("!reshape . -1 %s %q",
-			r2s(tk->rect(top, ".", Tk->Border|Tk->Required)), how));
+	req := sys->sprint("!reshape . -1 %s %q",
+			r2s(tk->rect(top, ".", Tk->Border|Tk->Required)), how);
+	wmctl(top, req);
 }
 
 startinput(top: ref Tk->Toplevel, devs: list of string)

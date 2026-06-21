@@ -9,7 +9,7 @@ CU: CharonUtils;
 	White, Black, Grey, DarkGrey, LightGrey, Blue, Navy, Red, Green, DarkRed: import CU;
 
 D: Draw;
-	Point, Rect, Font, Image, Display: import D;
+	Point, Rect, Font, Image, Display, Pointer: import D;
 S: String;
 T: StringIntTab;
 U: Url;
@@ -20,8 +20,9 @@ J: Script;
 E: Events;
 	Event: import E;
 G: Gui;
-	Popup: import G;
 B: Build;
+W: Widget;
+	Scrollbar: import W;
 
 # B : Build, declared in layout.m so main program can use it
 	Item, ItemSource,
@@ -38,12 +39,33 @@ B: Build;
 	Dnone, Dpixels, Dpercent, Drelative,
 	Ftext, Fpassword, Fcheckbox, Fradio, Fsubmit, Fhidden, Fimage,
 	Freset, Ffile, Fbutton, Fselect, Ftextarea,
+	Femail, Furl, Fnumber, Ftel, Fsearch, Fdate, Ftime, Fcolor, Frange,
 	Background,
 	FntR, FntI, FntB, FntT, NumStyle,
 	Tiny, Small, Normal, Large, Verylarge, NumSize, NumFnt, DefFnt,
 	ULnone, ULunder, ULmid,
 	FRnoresize, FRnoscroll, FRhscroll, FRvscroll,
-	FRhscrollauto, FRvscrollauto
+	FRhscrollauto, FRvscrollauto,
+	ComputedStyle, STYLNONE,
+	BSnone, BSsolid, BSdotted, BSdashed, BSdouble, BSgroove, BSridge, BSinset, BSoutset,
+	OVvisible, OVhidden, OVscroll, OVauto,
+	POSstatic, POSrelative, POSabsolute, POSfixed, POSsticky,
+	FLnone, FLleft, FLright,
+	CLnone, CLleft, CLright, CLboth,
+	VISvisible, VIShidden,
+	FFrequired, FFautofocus,
+	BSZcontent, BSZborder,
+	WBnormal, WBbreak_all,
+	TOclip, TOellipsis,
+	DSPINLINEBLOCK,
+	DSPflex, DSPinline_flex,
+	DSPgrid, DSPinline_grid,
+	FDrow, FDrow_reverse, FDcolumn, FDcolumn_reverse,
+	FWnowrap, FWwrap, FWwrap_reverse,
+	JCflex_start, JCflex_end, JCcenter, JCspace_between, JCspace_around, JCspace_evenly,
+	AIflex_start, AIflex_end, AIcenter, AIstretch, AIbaseline,
+	BGRrepeat, BGRno_repeat, BGRrepeat_x, BGRrepeat_y,
+	BGSZcover, BGSZcontain
     : import B;
 
 # font stuff
@@ -53,30 +75,41 @@ Fontinfo : adt {
 	spw:	int;			# width of a space in this font
 };
 
+# Use combined/DejaVu k8 antialiased fonts with size and weight variants.
+# k8 AA fonts render correctly at any DPI (unlike k1 bitmap fonts).
+#
+# Size mapping:
+#   Tiny/Small = 12pt, Normal = 14pt, Large = 18pt, Verylarge = 24pt
+#
+# Weight mapping:
+#   FntR/FntI = regular weight, FntB = bold weight (DejaVuSans-Bold)
+#
+# After a fresh clone, run `cd fonts/dejavu && mk` to generate the
+# bold and multi-size subfonts from DejaVuSans-Bold.ttf.
 fonts := array[NumFnt] of {
-	FntR*NumSize+Tiny => Fontinfo("/fonts/charon/plain.tiny.font", nil, 0),
-	FntR*NumSize+Small => ("/fonts/charon/plain.small.font", nil, 0),
-	FntR*NumSize+Normal => ("/fonts/charon/plain.normal.font", nil, 0),
-	FntR*NumSize+Large => ("/fonts/charon/plain.large.font", nil, 0),
-	FntR*NumSize+Verylarge => ("/fonts/charon/plain.vlarge.font", nil, 0),
-	
-	FntI*NumSize+Tiny => ("/fonts/charon/italic.tiny.font", nil, 0),
-	FntI*NumSize+Small => ("/fonts/charon/italic.small.font", nil, 0),
-	FntI*NumSize+Normal => ("/fonts/charon/italic.normal.font", nil, 0),
-	FntI*NumSize+Large => ("/fonts/charon/italic.large.font", nil, 0),
-	FntI*NumSize+Verylarge => ("/fonts/charon/italic.vlarge.font", nil, 0),
-	
-	FntB*NumSize+Tiny => ("/fonts/charon/bold.tiny.font", nil, 0),
-	FntB*NumSize+Small => ("/fonts/charon/bold.small.font", nil, 0),
-	FntB*NumSize+Normal => ("/fonts/charon/bold.normal.font", nil, 0),
-	FntB*NumSize+Large => ("/fonts/charon/bold.large.font", nil, 0),
-	FntB*NumSize+Verylarge => ("/fonts/charon/bold.vlarge.font", nil, 0),
-	
-	FntT*NumSize+Tiny => ("/fonts/charon/cw.tiny.font", nil, 0),
-	FntT*NumSize+Small => ("/fonts/charon/cw.small.font", nil, 0),
-	FntT*NumSize+Normal => ("/fonts/charon/cw.normal.font", nil, 0),
-	FntT*NumSize+Large => ("/fonts/charon/cw.large.font", nil, 0),
-	FntT*NumSize+Verylarge => ("/fonts/charon/cw.vlarge.font", nil, 0)
+	FntR*NumSize+Tiny     => Fontinfo("/fonts/combined/unicode.sans.12.font", nil, 0),
+	FntR*NumSize+Small    => ("/fonts/combined/unicode.sans.12.font", nil, 0),
+	FntR*NumSize+Normal   => ("/fonts/combined/unicode.sans.14.font", nil, 0),
+	FntR*NumSize+Large    => ("/fonts/combined/unicode.sans.18.font", nil, 0),
+	FntR*NumSize+Verylarge => ("/fonts/combined/unicode.sans.24.font", nil, 0),
+
+	FntI*NumSize+Tiny     => ("/fonts/combined/unicode.sans.12.font", nil, 0),
+	FntI*NumSize+Small    => ("/fonts/combined/unicode.sans.12.font", nil, 0),
+	FntI*NumSize+Normal   => ("/fonts/combined/unicode.sans.14.font", nil, 0),
+	FntI*NumSize+Large    => ("/fonts/combined/unicode.sans.18.font", nil, 0),
+	FntI*NumSize+Verylarge => ("/fonts/combined/unicode.sans.24.font", nil, 0),
+
+	FntB*NumSize+Tiny     => ("/fonts/combined/unicode.sans.bold.12.font", nil, 0),
+	FntB*NumSize+Small    => ("/fonts/combined/unicode.sans.bold.12.font", nil, 0),
+	FntB*NumSize+Normal   => ("/fonts/combined/unicode.sans.bold.14.font", nil, 0),
+	FntB*NumSize+Large    => ("/fonts/combined/unicode.sans.bold.18.font", nil, 0),
+	FntB*NumSize+Verylarge => ("/fonts/combined/unicode.sans.bold.24.font", nil, 0),
+
+	FntT*NumSize+Tiny     => ("/fonts/combined/unicode.14.font", nil, 0),
+	FntT*NumSize+Small    => ("/fonts/combined/unicode.14.font", nil, 0),
+	FntT*NumSize+Normal   => ("/fonts/combined/unicode.14.font", nil, 0),
+	FntT*NumSize+Large    => ("/fonts/combined/unicode.14.font", nil, 0),
+	FntT*NumSize+Verylarge => ("/fonts/combined/unicode.14.font", nil, 0),
 };
 
 # Seems better to use a slightly smaller font in Controls, to match other browsers
@@ -87,6 +120,13 @@ Colornode : adt {
 	rgb:	int;
 	im:	ref Image;
 	next:	ref Colornode;
+};
+
+# Flex layout line (for flex-wrap partitioning)
+FlexLine : adt {
+	start:	int;		# first item index
+	count:	int;		# number of items
+	maxh:	int;		# tallest item in line
 };
 
 # Source of info for page (html, image, etc.)
@@ -204,7 +244,26 @@ init(cu: CharonUtils)
 	J = cu->J;
 	B = cu->B;
 	display = G->display;
+	W = load Widget Widget->PATH;
 
+	if(display == nil) {
+		# Headless mode: no display, use fixed fallback metrics.
+		# Layout still runs (building items and lines for text extraction)
+		# but font metrics are approximated with constants.
+		linespace = 15;
+		lineascent = 12;
+		charspace = 8;
+		spspace = 4;
+		ctllinespace = 15;
+		ctllineascent = 12;
+		ctlcharspace = 8;
+		ctlspspace = 4;
+		return;
+	}
+	#TODO should read from env $font or config
+	if((CU->config).doacme)
+		for(i := 0; i < len fonts; i++)
+			fonts[i] = Fontinfo("/fonts/combined/unicode.sans.14.font", nil, 0);
 	# make sure default and control fonts are loaded
 	getfont(DefFnt);
 	fnt := fonts[DefFnt].f;
@@ -218,11 +277,16 @@ init(cu: CharonUtils)
 	ctllineascent = fnt.ascent;
 	ctlcharspace = fnt.width("a");
 	ctlspspace = fonts[CtlFnt].spw;
+	if(W != nil)
+		W->init(display, fonts[DefFnt].f);
 }
 
 stringwidth(s: string): int
 {
-	return fonts[DefFnt].f.width(s)/charspace;
+	f := fonts[DefFnt].f;
+	if(f == nil || charspace == 0)
+		return len(s);
+	return f.width(s)/charspace;
 }
 
 # Use bsmain to fill frame f.
@@ -280,7 +344,7 @@ layout(f: ref Frame, bsmain: ref ByteSource, linkclick: int) : array of byte
 	}
 	else {
 		# for now, must be supported image type
-		if(!I->supported(hdr.mtype)) {
+		if(I == nil || !I->supported(hdr.mtype)) {
 			sys->print("Need to implement something: source isn't supported image type\n");
 			return nil;
 		}
@@ -322,7 +386,6 @@ layout(f: ref Frame, bsmain: ref ByteSource, linkclick: int) : array of byte
 				if(error != "" && dbg)
 					sys->print("subordinate error: %s\n", error);
 				if(newurl != nil) {
-					s := ref *src;
 					freeit = 1;
 					pick ps := src {
 					Shtml or Srequired =>
@@ -413,7 +476,7 @@ layout(f: ref Frame, bsmain: ref ByteSource, linkclick: int) : array of byte
 						}
 						if(s.ci.mims[0] == mim)
 							haveimage(f, s.ci, s.itl);
-						if(bs.eof && bs.lim == bs.edata)
+						if(bs.eof && bs.lim == bs.edata && CU->imcache != nil)
 							(CU->imcache).add(s.ci);
 					}
 					if(!freeit && bs.eof && bs.lim == bs.edata)
@@ -447,7 +510,7 @@ addsubords(sources: ref Sources, di: ref Docinfo, auth: string) : int
 		it := hd il;
 		pick i := it {
 		Iimage =>
-			if(i.ci.mims == nil) {
+			if(i.ci.mims == nil && CU->imcache != nil) {
 				cachedci := (CU->imcache).look(i.ci);
 				if(cachedci != nil) {
 					i.ci = cachedci;
@@ -497,8 +560,8 @@ addsubords(sources: ref Sources, di: ref Docinfo, auth: string) : int
 
 startimreq(s: ref Source.Simage, auth: string)
 {
-	if(dbgev)
-		CU->event(sys->sprint("LAYOUT STARTREQ %s", s.ci.src.tostring()), 0);
+	if(I == nil)
+		return;
 	bs := CU->startreq(ref CU->ReqInfo(s.ci.src, CU->HGet, nil, auth, ""));
 	s.bs = bs;
 	s.imsrc = I->ImageSource.new(bs, s.ci.width, s.ci.height);
@@ -516,7 +579,13 @@ createvscroll(f: ref Frame)
 	f.vscr.r = f.vscr.r.addpt(Point(f.cr.max.x-breadth, f.cr.min.y));
 	f.cr.max.x -= breadth;
 	if(f.cr.dx() <= 2*f.marginw)
-		raise "EXInternal: frame too small for layout";
+		CU->raisex("EXInternal: frame too small for layout");
+	if(W != nil) {
+		pick sc := f.vscr {
+		Cscrollbar =>
+			sc.wsb = Scrollbar.new(f.vscr.r, 1);
+		}
+	}
 	f.vscr.draw(1);
 }
 
@@ -531,7 +600,13 @@ createhscroll(f: ref Frame)
 	f.hscr.r = f.hscr.r.addpt(Point(x,f.cr.max.y-breadth));
 	f.cr.max.y -= breadth;
 	if(f.cr.dy() <= 2*f.marginh)
-		raise "EXInternal: frame too small for layout";
+		CU->raisex("EXInternal: frame too small for layout");
+	if(W != nil) {
+		pick sc := f.hscr {
+		Cscrollbar =>
+			sc.wsb = Scrollbar.new(f.hscr.r, 0);
+		}
+	}
 	f.hscr.draw(1);
 }
 
@@ -588,6 +663,8 @@ haveimage(f: ref Frame, ci: ref CImage, itl: list of ref Item)
 	if(dbg)
 		sys->print("\nHAVEIMAGE src=%s w=%d h=%d\n", ci.src.tostring(), ci.width, ci.height);
 	# make all base images repl'd - makes handling backgrounds much easier
+	if(ci.mims == nil || ci.mims[0] == nil || ci.mims[0].im == nil)
+		return;
 	im := ci.mims[0].im;
 	im.repl = 1;
 	im.clipr = Rect((-16rFFFFFFF, -16r3FFFFFFF), (16r3FFFFFFF, 16r3FFFFFFF));
@@ -625,6 +702,9 @@ haveimage(f: ref Frame, ci: ref CImage, itl: list of ref Item)
 										fit.height = fit.item.height;
 									Itable =>
 										checktabsize(f, xi, TABLEFLOATTARGET);
+									Ibox =>
+										checkboxsize(f, fit, xi, TABLEFLOATTARGET);
+										fit.height = fit.item.height;
 									}
 								}
 							}
@@ -829,6 +909,9 @@ fixlinegeom(f: ref Frame, lay: ref Lay, l: ref Line)
 	linehang := hang;
 	hangtogo := hang;
 	indent := ((state&IFindentmask)>>IFindentshift)*TABPIX;
+	# CSS text-indent: apply to first line of block
+	if(lay.text_indent != 0 && lprev == lay.start)
+		indent += lay.text_indent;
 	just := (state&(IFcjust|IFrjust));
 	if(just == 0 && lay.just != Aleft) {
 		if(lay.just == byte Acenter)
@@ -863,6 +946,9 @@ fixlinegeom(f: ref Frame, lay: ref Lay, l: ref Line)
 		}
 		state = it.state;
 		wrapping := int (state&IFwrap);
+		# CSS white-space: nowrap disables line wrapping
+		if(lay.white_space == B->WSnowrap)
+			wrapping = 0;
 		if(anystuff && (state&IFbrk))
 			break;
 		checkw := 1;
@@ -915,6 +1001,12 @@ fixlinegeom(f: ref Frame, lay: ref Lay, l: ref Line)
 			checktabsize(f, i, lwid-w);
 			if(kindspec != 0)
 				i.table.width.kindspec = kindspec;
+		Ibox =>
+			# Size box using sublayout, like a table cell
+			checkboxsize(f, i, i, lwid-w);
+			# Out-of-flow: absolutely/fixed positioned elements don't consume flow space
+			if(i.cstyle != nil && (i.cstyle.position == POSabsolute || i.cstyle.position == POSfixed))
+				checkw = 0;
 		Irule =>
 			avail := lwid-w;
 			# When just doing layout for cell dimensions, don't
@@ -927,6 +1019,20 @@ fixlinegeom(f: ref Frame, lay: ref Lay, l: ref Line)
 		}
 		if(checkw) {
 			iw := it.width;
+			# CSS letter-spacing / word-spacing: adjust text item widths
+			pick ti := it {
+			Itext =>
+				if(lay.letter_spacing != STYLNONE && lay.letter_spacing != 0 && len ti.s > 1)
+					iw += lay.letter_spacing * (len ti.s - 1);
+				if(lay.word_spacing != STYLNONE && lay.word_spacing != 0) {
+					nsp := 0;
+					for(si := 0; si < len ti.s; si++)
+						if(ti.s[si] == ' ')
+							nsp++;
+					iw += lay.word_spacing * nsp;
+				}
+				it.width = iw;
+			}
 			if(wrapping && w + iw > lwid) {
 				# it doesn't fit; see if it can be broken
 				takeit: int;
@@ -985,7 +1091,7 @@ fixlinegeom(f: ref Frame, lay: ref Lay, l: ref Line)
 	# line is complete, next line will start with it (or it is nil)
 	rest := it;
 	if(lastit == nil)
-		raise "EXInternal: no items on line";
+		CU->raisex("EXInternal: no items on line");
 	lastit.next = nil;
 
 	l.width = w;
@@ -1028,6 +1134,46 @@ fixlinegeom(f: ref Frame, lay: ref Lay, l: ref Line)
 			l.items.printlist("final line items");
 	}
 	l.pos.x = x;
+	# CSS line-height: enforce minimum line height
+	if(lay.line_height != STYLNONE && lineh < lay.line_height) {
+		extra := lay.line_height - lineh;
+		linea += extra / 2;	# center content vertically in line
+		lineh = lay.line_height;
+	}
+	# CSS2.1 margin collapsing: adjacent block siblings
+	# If this line contains only a block-level Ibox, collapse its top margin
+	# with the previous block's bottom margin.
+	boxitem : ref Item.Ibox = nil;
+	onlybox := 0;
+	pick bi := l.items {
+	Ibox =>
+		if(bi.next == nil && bi.cstyle != nil
+		    && bi.cstyle.display != DSPINLINEBLOCK) {
+			boxitem = bi;
+			onlybox = 1;
+		}
+	}
+	if(onlybox && boxitem.cstyle != nil) {
+		topmgn := boxitem.cstyle.margin[0];
+		botmgn := boxitem.cstyle.margin[2];
+		if(topmgn == B->MARGIN_AUTO) topmgn = 0;
+		if(botmgn == B->MARGIN_AUTO) botmgn = 0;
+		if(topmgn < 0) topmgn = 0;
+		if(botmgn < 0) botmgn = 0;
+		# Collapse: use max of adjacent margins instead of sum
+		if(lay.last_margin_bottom > 0 && topmgn > 0) {
+			if(topmgn > lay.last_margin_bottom)
+				collapsed := topmgn;
+			else
+				collapsed = lay.last_margin_bottom;
+			saved := lay.last_margin_bottom + topmgn - collapsed;
+			if(saved > 0)
+				l.pos.y -= saved;
+		}
+		lay.last_margin_bottom = botmgn;
+	} else
+		lay.last_margin_bottom = 0;
+
 	l.height = lineh;
 	l.ascent = linea;
 	l.flags &= ~Lchanged;
@@ -1082,12 +1228,14 @@ changelines(l, lend: ref Line)
 # Return a ref Font for font number num = (style*NumSize + size)
 getfont(num: int) : ref Font
 {
+	if(display == nil)
+		return nil;
 	f := fonts[num].f;
 	if(f == nil) {
 		f = Font.open(display, fonts[num].name);
 		if(f == nil) {
 			if(num == DefFnt)
-				raise sys->sprint("exLayout: can't open default font %s: %r", fonts[num].name);
+				CU->raisex(sys->sprint("exLayout: can't open default font %s: %r", fonts[num].name));
 			else {
 				if(int (CU->config).dbg['w'])
 					sys->print("warning: substituting default for font %s\n",
@@ -1112,16 +1260,22 @@ measure(fr: ref Frame, items: ref Item)
 		pick t := it {
 		Itext =>
 			f := getfont(t.fnt);
-			it.width = f.width(t.s);
-			a := f.ascent;
-			h := f.height;
-			if(t.voff != byte Voffbias) {
-				a -= (int t.voff) - Voffbias;
-				if(a > h)
-					h = a;
+			if(f == nil) {
+				it.width = len(t.s) * charspace;
+				it.height = linespace;
+				it.ascent = lineascent;
+			} else {
+				it.width = f.width(t.s);
+				a := f.ascent;
+				h := f.height;
+				if(t.voff != byte Voffbias) {
+					a -= (int t.voff) - Voffbias;
+					if(a > h)
+						h = a;
+				}
+				it.height = h;
+				it.ascent = a;
 			}
-			it.height = h;
-			it.ascent = a;
 		Irule =>
 			it.height =  t.size + 2*RULESP;
 			it.ascent = t.size + RULESP;
@@ -1153,16 +1307,63 @@ measure(fr: ref Frame, items: ref Item)
 				it.height = t.item.height;
 			Itable =>
 				checktabsize(fr, i, TABLEFLOATTARGET);
+			Ibox =>
+				# float containing a box
+				measure(fr, i.content);
+				checkboxsize(fr, t.item, i, TABLEFLOATTARGET);
+				# Include CSS margins in float dimensions for text wrapping
+				if(i.cstyle != nil) {
+					ml := i.cstyle.margin[3];
+					mr := i.cstyle.margin[1];
+					mt := i.cstyle.margin[0];
+					mb := i.cstyle.margin[2];
+					if(ml > 0 && ml != B->MARGIN_AUTO)
+						t.item.width += ml;
+					if(mr > 0 && mr != B->MARGIN_AUTO)
+						t.item.width += mr;
+					if(mt > 0 && mt != B->MARGIN_AUTO)
+						t.item.height += mt;
+					if(mb > 0 && mb != B->MARGIN_AUTO)
+						t.item.height += mb;
+				}
+				it.height = t.item.height;
 			* =>
 				CU->assert(0);
 			}
+			it.ascent = it.height;
+		Ibox =>
+			# Box with CSS box model
+			measure(fr, t.content);
+			# Estimate box size from content (will be refined in fixlinegeom)
+			contentw := 0;
+			contenth := 0;
+			for(ci := t.content; ci != nil; ci = ci.next) {
+				contentw += ci.width;
+				if(ci.height > contenth)
+					contenth = ci.height;
+			}
+			# Add padding and border
+			cs := t.cstyle;
+			padw := 0;
+			padh := 0;
+			if(cs != nil) {
+				padw = cs.padding[1] + cs.padding[3] + cs.border_width[1] + cs.border_width[3];
+				padh = cs.padding[0] + cs.padding[2] + cs.border_width[0] + cs.border_width[2];
+			}
+			it.width = contentw + padw;
+			it.height = contenth + padh;
 			it.ascent = it.height;
 		Ispacer =>
 			case t.spkind {
 			ISPvline =>
 				f := getfont(t.fnt);
-				it.height = f.height;
-				it.ascent = f.ascent;
+				if(f == nil) {
+					it.height = linespace;
+					it.ascent = lineascent;
+				} else {
+					it.height = f.height;
+					it.ascent = f.ascent;
+				}
 			ISPhspace =>
 				getfont(t.fnt);
 				it.width = fonts[t.fnt].spw;
@@ -1199,6 +1400,13 @@ lgeom(H, A: int, it: ref Item) : (int, int)
 		atype = i.align;
 	Itable =>
 		atype = Atop;
+	Ibox =>
+		# inline-block with vertical-align uses specified alignment
+		if(i.cstyle != nil && i.cstyle.display == DSPINLINEBLOCK
+		    && i.cstyle.vertical_align != Anone)
+			atype = i.cstyle.vertical_align;
+		else
+			atype = Atop;
 	Ifloat =>
 		return (H, A);
 	}
@@ -1383,6 +1591,8 @@ floatw(ymin, ymax: int, flist: list of ref Item.Ifloat, side: byte) : int
 			continue;
 		fymin := fl.y;
 		fymax := fymin + fl.item.height;
+		if(fl.item.height == 0)
+			fymax++;	# assume float will have some height later
 		if((fymin <= ymin && ymin < fymax) ||
 		   (ymin <= fymin && fymin < ymax)) {
 			w := fl.x;
@@ -1480,6 +1690,11 @@ sizetable(f: ref Frame, tab: ref Table, availwidth: int)
 		return;
 	if(tab.availw == availwidth && (tab.flags&Lchanged) == byte 0)
 		return;
+	# table-layout: fixed — use first row/col specs for widths, skip content measuring
+	if(tab.table_layout == byte 1 && tab.width.kind() != Dnone) {
+		sizetable_fixed(f, tab, availwidth);
+		return;
+	}
 	(hsp, vsp, pad, bd, cbd, hsep, vsep) := tableparams(tab);
 	totw := widthfromspec(tab.width, availwidth);
 	# reduce totw by spacing, padding, and rule widths
@@ -1717,17 +1932,181 @@ sizetable(f: ref Frame, tab: ref Table, availwidth: int)
 			tab.tableid, availwidth, totw, toth);
 }
 
+# Fixed table layout: column widths from col specs and first-row cells only.
+# Much faster than auto layout for large tables.
+sizetable_fixed(f: ref Frame, tab: ref Table, availwidth: int)
+{
+	(hsp, vsp, pad, bd, cbd, hsep, vsep) := tableparams(tab);
+	totw := widthfromspec(tab.width, availwidth);
+	totw -= (tab.ncol-1)*hsep + 2*(hsp+bd+pad+cbd);
+	if(totw <= 0)
+		totw = 1;
+
+	# Determine column widths from col specs or first-row cells
+	colw := array[tab.ncol] of { * => 0 };
+	assigned := 0;
+	remaining := totw;
+
+	# First pass: explicit col specs
+	for(ci := 0; ci < tab.ncol; ci++) {
+		if(ci < len tab.cols && tab.cols[ci].width > 0) {
+			colw[ci] = tab.cols[ci].width;
+			assigned++;
+			remaining -= colw[ci];
+		}
+	}
+
+	# Second pass: first-row cell widths for unassigned columns
+	if(tab.nrow > 0) {
+		row := tab.rows[0];
+		for(rcl := row.cells; rcl != nil; rcl = tl rcl) {
+			c := hd rcl;
+			if(c.colspan == 1 && c.col < tab.ncol && colw[c.col] == 0) {
+				if(c.wspec.kind() == Dpixels) {
+					colw[c.col] = c.wspec.spec();
+					assigned++;
+					remaining -= colw[c.col];
+				} else if(c.wspec.kind() == Dpercent) {
+					colw[c.col] = totw * c.wspec.spec() / 100;
+					assigned++;
+					remaining -= colw[c.col];
+				}
+			}
+		}
+	}
+
+	# Distribute remaining width equally among unassigned columns
+	unassigned := tab.ncol - assigned;
+	if(unassigned > 0 && remaining > 0) {
+		share := remaining / unassigned;
+		for(ci = 0; ci < tab.ncol; ci++)
+			if(colw[ci] == 0)
+				colw[ci] = share;
+	}
+
+	# Set final column widths
+	for(ci = 0; ci < tab.ncol; ci++)
+		tab.cols[ci].width = colw[ci];
+
+	# Recalculate totw from actual column widths
+	totw = 0;
+	for(ci = 0; ci < tab.ncol; ci++)
+		totw += tab.cols[ci].width;
+	totw += (tab.ncol-1)*hsep + 2*(hsp+bd+pad+cbd);
+
+	# Layout all cells at fixed widths
+	for(cl := tab.cells; cl != nil; cl = tl cl) {
+		c := hd cl;
+		wd := cellwidth(tab, c, hsep);
+		if(c.layid < 0) {
+			c.layid = sublayout(f, wd, c.align.halign, c.background, c.content);
+			c.content = nil;
+		} else
+			relayout(f, f.sublays[c.layid], wd, c.align.halign);
+	}
+
+	# Set row heights (same logic as auto layout)
+	for(ri := 0; ri < tab.nrow; ri++) {
+		row := tab.rows[ri];
+		h := 0;
+		for(rcl := row.cells; rcl != nil; rcl = tl rcl) {
+			c := hd rcl;
+			if(c.rowspan > 1 || c.layid < 0)
+				continue;
+			clay := f.sublays[c.layid];
+			if(clay.height > h)
+				h = clay.height;
+		}
+		row.height = h;
+		row.ascent = 0;
+	}
+
+	# Handle rowspan > 1
+	for(cl = tab.cells; cl != nil; cl = tl cl) {
+		c := hd cl;
+		if(c.rowspan > 1 && c.layid >= 0) {
+			spanht := 0;
+			for(i := 0; i < c.rowspan && c.row+i < tab.nrow; i++)
+				spanht += tab.rows[c.row+i].height;
+			clay := f.sublays[c.layid];
+			ht := clay.height - (c.rowspan-1)*vsep;
+			if(ht > spanht) {
+				extra := ht - spanht;
+				for(i = 0; i < c.rowspan && c.row+i < tab.nrow; i++) {
+					h := extra / (c.rowspan - i);
+					tab.rows[c.row+i].height += h;
+					extra -= h;
+				}
+			}
+		}
+	}
+
+	# Set column positions
+	x := hsp + bd + pad + cbd;
+	for(ci = 0; ci < tab.ncol; ci++) {
+		tab.cols[ci].pos.x = x;
+		x += tab.cols[ci].width + hsep;
+	}
+
+	# Caption
+	toth := vsp + bd;
+	if(tab.caption != nil) {
+		tab.caption_lay = sublayout(f, availwidth, Aleft, Background(nil, -1), tab.caption);
+		caplay := f.sublays[tab.caption_lay];
+		tab.caph = caplay.height + CAPSEP;
+		tab.caption = nil;
+	} else if(tab.caption_lay >= 0) {
+		caplay := f.sublays[tab.caption_lay];
+		if(tab.availw != availwidth || (caplay.flags&Lchanged) != byte 0) {
+			relayout(f, caplay, availwidth, Aleft);
+			tab.caph = caplay.height + CAPSEP;
+		}
+	}
+	if(tab.caption_place == Atop)
+		toth += tab.caph;
+	for(ri = 0; ri < tab.nrow; ri++) {
+		tab.rows[ri].pos.y = toth;
+		toth += tab.rows[ri].height + vsep;
+	}
+	toth = toth - (cbd+pad) + bd;
+	if(tab.caption_place == Abottom)
+		toth += tab.caph;
+	tab.totw = totw;
+	tab.toth = toth;
+	tab.availw = availwidth;
+	tab.flags &= ~Lchanged;
+}
+
 # Calculate various table spacing parameters
+# Handles CSS border-collapse and border-spacing
 tableparams(tab: ref Table) : (int, int, int, int, int, int, int)
 {
 	bd := tab.border;
 	hsp := tab.cellspacing;
 	vsp := hsp;
 	pad := tab.cellpadding;
+
+	# CSS border-spacing overrides cellspacing when set
+	if(tab.border_spacing > 0) {
+		hsp = tab.border_spacing;
+		vsp = tab.border_spacing;
+	}
+
+	# border-collapse: collapse eliminates inter-cell spacing
+	if(tab.border_collapse == byte 1) {
+		hsp = 0;
+		vsp = 0;
+	}
+
 	if(bd != 0)
 		cbd := 1;
 	else
 		cbd = 0;
+
+	# In collapsed mode, no cell border distinction
+	if(tab.border_collapse == byte 1)
+		cbd = 0;
+
 	hsep := 2*(cbd+pad)+hsp;
 	vsep := 2*(cbd+pad)+vsp;
 	return (hsp, vsp, pad, bd, cbd, hsep, vsep);
@@ -1984,7 +2363,7 @@ checkffsize(f: ref Frame, i: ref Item, ff: ref Formfield)
 	if(ff.ftype == Fimage && ff.image != nil) {
 		pick imi := ff.image {
 		Iimage =>
-			if(imi.ci.mims != nil && ff.ctlid >= 0) {
+			if(imi.ci.mims != nil && len imi.ci.mims > 0 && imi.ci.mims[0] != nil && imi.ci.mims[0].im != nil && ff.ctlid >= 0) {
 				pick b := f.controls[ff.ctlid] {
 				Cbutton =>
 					if(b.pic == nil) {
@@ -2019,8 +2398,25 @@ checkffsize(f: ref Frame, i: ref Item, ff: ref Formfield)
 	}
 }
 
+# Resolve a CSS position offset value (top/left/right/bottom) to pixels.
+# val is the offset value, ispct indicates percentage mode, ref_size is the
+# containing block dimension to resolve percentages against.
+# Returns 0 for STYLNONE (not set).
+resolvepos(val: int, ispct: byte, ref_size: int) : int
+{
+	if(val == STYLNONE)
+		return 0;
+	if(int ispct)
+		return ref_size * val / 100;
+	return val;
+}
+
 drawall(f: ref Frame)
 {
+	if(display == nil)
+		return;		# headless mode: no rendering
+	if((CU->config).doacme && !(CU->config).dorender)
+		return;		# in acme mode don't bother (unless render mode)
 	oclipr := f.cim.clipr;
 	origin := f.lptosp(zp);
 	clipr := f.dirtyr.addpt(origin);
@@ -2031,22 +2427,25 @@ drawall(f: ref Frame)
 			f.cr.min.x, f.cr.min.y, f.cr.max.x, f.cr.max.y,
 			f.viewr.min.x, f.viewr.min.y, f.viewr.max.x, f.viewr.max.y,
 			origin.x, origin.y);
-	if(f.layout != nil)
-		drawlay(f, f.layout, origin);
+	if(f.layout != nil) {
+		# Initial containing block = viewport (frame content area)
+		icb := ref ContainingBlock(f.cr.min, f.cr.dx(), f.cr.dy());
+		drawlay(f, f.layout, origin, icb);
+	}
 	f.cim.clipr = oclipr;
 	G->flush(f.cr);
 	f.isdirty = 0;
 }
 
-drawlay(f: ref Frame, lay: ref Lay, origin: Point)
+drawlay(f: ref Frame, lay: ref Lay, origin: Point, cb: ref ContainingBlock)
 {
 	for(l := lay.start.next; l != lay.end; l = l.next)
-		drawline(f, origin, l, lay);
+		drawline(f, origin, l, lay, cb);
 }
 
 # Draw line l in frame f, assuming that content's (0,0)
 # aligns with layorigin in f.cim.
-drawline(f : ref Frame, layorigin : Point, l: ref Line, lay: ref Lay)
+drawline(f : ref Frame, layorigin : Point, l: ref Line, lay: ref Lay, cb: ref ContainingBlock)
 {
 	im := f.cim;
 	o := layorigin.add(l.pos);
@@ -2137,8 +2536,67 @@ drawline(f : ref Frame, layorigin : Point, l: ref Line, lay: ref Lay)
 			}
 		Itable =>
 			# don't check inview - table can contain images
-			drawtable(f, lay, Point(x,y), i.table);
-			t := i.table;
+			drawtable(f, lay, Point(x,y), i.table, cb);
+		Ibox =>
+			# Draw box with CSS box model
+			# Apply positioning offsets
+			ox := x;
+			oy := y;
+			if(i.cstyle != nil) {
+				case int i.cstyle.position {
+				int POSrelative =>
+					ox += resolvepos(i.cstyle.pos_left, i.cstyle.pos_left_ispct, cb.width);
+					if(i.cstyle.pos_left == STYLNONE && i.cstyle.pos_right != STYLNONE)
+						ox -= resolvepos(i.cstyle.pos_right, i.cstyle.pos_right_ispct, cb.width);
+					oy += resolvepos(i.cstyle.pos_top, i.cstyle.pos_top_ispct, cb.height);
+					if(i.cstyle.pos_top == STYLNONE && i.cstyle.pos_bottom != STYLNONE)
+						oy -= resolvepos(i.cstyle.pos_bottom, i.cstyle.pos_bottom_ispct, cb.height);
+				int POSabsolute =>
+					# Position relative to containing block
+					ox = cb.origin.x;
+					oy = cb.origin.y;
+					leftv := resolvepos(i.cstyle.pos_left, i.cstyle.pos_left_ispct, cb.width);
+					rightv := resolvepos(i.cstyle.pos_right, i.cstyle.pos_right_ispct, cb.width);
+					topv := resolvepos(i.cstyle.pos_top, i.cstyle.pos_top_ispct, cb.height);
+					bottomv := resolvepos(i.cstyle.pos_bottom, i.cstyle.pos_bottom_ispct, cb.height);
+					# Horizontal: left wins; if both set with margin:auto, center
+					if(i.cstyle.pos_left != STYLNONE && i.cstyle.pos_right != STYLNONE
+					    && i.cstyle.margin[1] == B->MARGIN_AUTO && i.cstyle.margin[3] == B->MARGIN_AUTO) {
+						# CSS2.1 centering: margin:auto + both left/right set
+						ox += leftv + (cb.width - leftv - rightv - i.width) / 2;
+					} else if(i.cstyle.pos_left != STYLNONE)
+						ox += leftv;
+					else if(i.cstyle.pos_right != STYLNONE)
+						ox = cb.origin.x + cb.width - i.width - rightv;
+					# Vertical
+					if(i.cstyle.pos_top != STYLNONE)
+						oy += topv;
+					else if(i.cstyle.pos_bottom != STYLNONE)
+						oy = cb.origin.y + cb.height - i.height - bottomv;
+				int POSfixed =>
+					# Position relative to viewport (frame rect)
+					ox = f.r.min.x;
+					oy = f.r.min.y;
+					if(i.cstyle.pos_left != STYLNONE)
+						ox += resolvepos(i.cstyle.pos_left, i.cstyle.pos_left_ispct, f.r.dx());
+					else if(i.cstyle.pos_right != STYLNONE)
+						ox = f.r.max.x - i.width - resolvepos(i.cstyle.pos_right, i.cstyle.pos_right_ispct, f.r.dx());
+					if(i.cstyle.pos_top != STYLNONE)
+						oy += resolvepos(i.cstyle.pos_top, i.cstyle.pos_top_ispct, f.r.dy());
+					else if(i.cstyle.pos_bottom != STYLNONE)
+						oy = f.r.max.y - i.height - resolvepos(i.cstyle.pos_bottom, i.cstyle.pos_bottom_ispct, f.r.dy());
+				int POSsticky =>
+					# Sticky: like relative, but clamp to viewport top when scrolled past
+					stickyoff := resolvepos(i.cstyle.pos_top, i.cstyle.pos_top_ispct, cb.height);
+					viewtop := f.viewr.min.y;
+					if(oy < viewtop + stickyoff)
+						oy = viewtop + stickyoff;
+				}
+			}
+			# Out-of-flow boxes may be on zero-height lines; always draw them
+			if(inview || (i.cstyle != nil
+			    && (i.cstyle.position == POSabsolute || i.cstyle.position == POSfixed)))
+				drawbox(f, lay, Point(ox,oy), i, cb);
 		Ifloat =>
 			xx := layorigin.x + lay.margin;
 			if(i.side == Aright) {
@@ -2157,7 +2615,18 @@ drawline(f : ref Frame, layorigin : Point, l: ref Line, lay: ref Lay)
 			Iimage =>
 				drawimg(f, Point(xx, layorigin.y + i.y + (int fi.border + int fi.vspace)), fi);
 			Itable =>
-				drawtable(f, lay, Point(xx, layorigin.y + i.y), fi.table);
+				drawtable(f, lay, Point(xx, layorigin.y + i.y), fi.table, cb);
+			Ibox =>
+				# Offset by CSS margins (included in float dimensions)
+				bxx := xx;
+				byy := layorigin.y + i.y;
+				if(fi.cstyle != nil) {
+					if(fi.cstyle.margin[3] > 0 && fi.cstyle.margin[3] != B->MARGIN_AUTO)
+						bxx += fi.cstyle.margin[3];
+					if(fi.cstyle.margin[0] > 0 && fi.cstyle.margin[0] != B->MARGIN_AUTO)
+						byy += fi.cstyle.margin[0];
+				}
+				drawbox(f, lay, Point(bxx, byy), fi, cb);
 			}
 		}
 		x += it.width;
@@ -2188,9 +2657,14 @@ drawimg(f: ref Frame, iorigin: Point, i: ref Item.Iimage)
 			}
 		}
 		else if (inview) {
-			mim := ci.mims[0];
-			iorigin = iorigin.add(mim.origin);
-			im.draw(r, mim.im, mim.mask, zp);
+			mims := ci.mims;
+			if(mims != nil) {
+				mim := mims[0];
+				if(mim != nil && mim.im != nil) {
+					iorigin = iorigin.add(mim.origin);
+					im.draw(r, mim.im, mim.mask, zp);
+				}
+			}
 		}
 		if(inview && i.border != byte 0) {
 			if(i.anchorid != 0)
@@ -2213,14 +2687,14 @@ drawimg(f: ref Frame, iorigin: Point, i: ref Item.Iimage)
 	}
 }
 
-drawtable(f : ref Frame, parentlay: ref Lay, torigin: Point, tab: ref Table)
+drawtable(f : ref Frame, parentlay: ref Lay, torigin: Point, tab: ref Table, cb: ref ContainingBlock)
 {
 	if (dbgtab)
 		sys->print("drawtable %d\n", tab.tableid);
 	if(tab.ncol == 0 || tab.nrow == 0)
 		return;
 	im := f.cim;
-	(hsp, vsp, pad, bd, cbd, hsep, vsep) := tableparams(tab);
+	(nil, vsp, pad, bd, nil, hsep, vsep) := tableparams(tab);
 	x := torigin.x;
 	y := torigin.y;
 	capy := y;
@@ -2249,18 +2723,25 @@ drawtable(f : ref Frame, parentlay: ref Lay, torigin: Point, tab: ref Table)
 		clay := f.sublays[c.layid];
 		if(clay == nil)
 			continue;
-		if(c.col >= len tab.cols)
+		# empty-cells: hide - skip border/background for empty cells
+		if(tab.empty_cells == byte 1 && clay.height == 0)
 			continue;
 		cx := x + tab.cols[c.col].pos.x;
-		cy := y + tab.rows[c.row].pos.y;
+		cy := boxy + tab.rows[c.row].pos.y;
 		wd := cellwidth(tab, c, hsep);
 		ht := cellheight(tab, c, vsep);
 		if(c.background.image != nil && c.background.image.ci != nil && c.background.image.ci.mims != nil) {
 			cellr := Rect((cx-pad,cy-pad),(cx+wd+pad,cy+ht+pad));
 			ci := c.background.image.ci;
-			bgi := ci.mims[0].im;
-			bgmask := ci.mims[0].mask;
-			im.draw(cellr, bgi, bgmask, bgi.r.min);
+			mims := ci.mims;
+			if(mims != nil && mims[0] != nil && mims[0].im != nil) {
+				bgi := mims[0].im;
+				bgmask := mims[0].mask;
+				im.draw(cellr, bgi, bgmask, bgi.r.min);
+			} else if(c.background.color != -1 && c.background.color != tab.background.color) {
+				bgi := colorimage(c.background.color);
+				im.draw(cellr, bgi, nil, zp);
+			}
 		} else if(c.background.color != -1 && c.background.color != tab.background.color) {
 			bgi := colorimage(c.background.color);
 			im.draw(((cx-pad,cy-pad),(cx+wd+pad,cy+ht+pad)),
@@ -2279,14 +2760,14 @@ drawtable(f : ref Frame, parentlay: ref Lay, torigin: Point, tab: ref Table)
 		if(dbgtab)
 			sys->print("drawtable %d cell %d at (%d,%d)\n",
 				tab.tableid, c.cellid, cx, cy);
-		drawlay(f, clay, Point(cx,cy));
+		drawlay(f, clay, Point(cx,cy), cb);
 	}
 	if(tab.caption_lay >= 0) {
 		caplay := f.sublays[tab.caption_lay];
 		capx := x;
 		if(caplay.width < tab.totw)
 			capx += (tab.totw-caplay.width) / 2;
-		drawlay(f, caplay, Point(capx,capy));
+		drawlay(f, caplay, Point(capx,capy), cb);
 	}
 }
 
@@ -2304,54 +2785,111 @@ drawborder(im: ref Image, r: Rect, n, color: int)
 	im.draw((Point(xr-n,y+n),Point(xr,ybi)), src, nil, zp);			# right
 }
 
-# Draw relief border just outside r, width 2 border,
-# colors white/lightgrey/darkgrey/black
-# to give raised relief (if raised != 0) or sunken.
-drawrelief(im: ref Image, r: Rect, raised: int)
+# Draw flat border just outside r, width 1px, neutral gray.
+# raised parameter retained for API compatibility but ignored.
+drawrelief(im: ref Image, r: Rect, nil: int)
 {
-	# ((x,y),(xr,yb)) == r
-	x := r.min.x;
-	x1 := x-1;
-	x2 := x-2;
-	xr := r.max.x;
-	xr1 := xr+1;
-	xr2 := xr+2;
-	y := r.min.y;
-	y1 := y-1;
-	y2 := y-2;
-	yb := r.max.y;
-	yb1 := yb+1;
-	yb2 := yb+2;
-
-	# colors for top/left outside, top/left inside, bottom/right outside, bottom/right inside
-	tlo, tli, bro, bri: ref Image;
-	if(raised) {
-		tlo = colorimage(Grey);
-		tli = colorimage(White);
-		bro = colorimage(Black);
-		bri = colorimage(DarkGrey);
-	}
-	else {
-		tlo = colorimage(DarkGrey);
-		tli = colorimage(Black);
-		bro = colorimage(White);
-		bri = colorimage(Grey);
-	}
-
-	im.draw((Point(x2,y2), Point(xr1,y1)), tlo, nil, zp);		# top outside
-	im.draw((Point(x1,y1), Point(xr,y)), tli, nil, zp);			# top inside
-	im.draw((Point(x2,y1), Point(x1,yb1)), tlo, nil, zp);		# left outside
-	im.draw((Point(x1,y), Point(x,yb)), tli, nil, zp);			# left inside
-	im.draw((Point(xr,y1),Point(xr1,yb)), bri, nil, zp);		# right inside
-	im.draw((Point(xr1,y),Point(xr2,yb1)), bro, nil, zp);		# right outside
-	im.draw((Point(x1,yb),Point(xr1,yb1)), bri, nil, zp);		# bottom inside
-	im.draw((Point(x,yb1),Point(xr2,yb2)), bro, nil, zp);		# bottom outside
+	col := colorimage(DarkGrey);
+	x := r.min.x; x1 := x-1;
+	xr := r.max.x; xr1 := xr+1;
+	y := r.min.y; y1 := y-1;
+	yb := r.max.y; yb1 := yb+1;
+	im.draw((Point(x1,y1), Point(xr1,y)), col, nil, zp);		# top
+	im.draw((Point(x1,y), Point(x,yb1)), col, nil, zp);		# left
+	im.draw((Point(xr,y1),Point(xr1,yb1)), col, nil, zp);		# right
+	im.draw((Point(x1,yb),Point(xr1,yb1)), col, nil, zp);		# bottom
 }
 
 # Fill r with color
 drawfill(im: ref Image, r: Rect, color: int)
 {
 	im.draw(r, colorimage(color), nil, zp);
+}
+
+# Draw a CSS background image into the given rectangle with repeat and position
+drawbgimage(im: ref Image, bgr: Rect, cs: ref ComputedStyle)
+{
+	if(cs.bgimage_ci == nil || cs.bgimage_ci.mims == nil)
+		return;
+	mims := cs.bgimage_ci.mims;
+	if(mims == nil || mims[0] == nil || mims[0].im == nil)
+		return;
+	bgi := mims[0].im;
+
+	# Image natural dimensions
+	iw := bgi.r.dx();
+	ih := bgi.r.dy();
+	if(iw <= 0 || ih <= 0)
+		return;
+
+	bw := bgr.dx();
+	bh := bgr.dy();
+
+	# Apply background-size
+	dw := iw;
+	dh := ih;
+	if(cs.bgsize_w == BGSZcover) {
+		# Scale to cover entire box (maintaining aspect ratio)
+		sx := bw * 100 / iw;
+		sy := bh * 100 / ih;
+		scale := sx;
+		if(sy > scale)
+			scale = sy;
+		dw = iw * scale / 100;
+		dh = ih * scale / 100;
+	}
+	else if(cs.bgsize_w == BGSZcontain) {
+		# Scale to fit within box
+		sx := bw * 100 / iw;
+		sy := bh * 100 / ih;
+		scale := sx;
+		if(sy < scale)
+			scale = sy;
+		dw = iw * scale / 100;
+		dh = ih * scale / 100;
+	}
+	else {
+		if(cs.bgsize_w > 0)
+			dw = cs.bgsize_w;
+		if(cs.bgsize_h > 0)
+			dh = cs.bgsize_h;
+		# If one dimension specified and other is auto, maintain aspect ratio
+		if(cs.bgsize_w > 0 && cs.bgsize_h == 0)
+			dh = ih * dw / iw;
+		else if(cs.bgsize_h > 0 && cs.bgsize_w == 0)
+			dw = iw * dh / ih;
+	}
+	if(dw <= 0) dw = 1;
+	if(dh <= 0) dh = 1;
+
+	# Starting position with background-position offset
+	sx := bgr.min.x + cs.bgposition_x;
+	sy := bgr.min.y + cs.bgposition_y;
+
+	# Draw based on repeat mode
+	case int cs.bgrepeat {
+	int BGRno_repeat =>
+		dr := Rect(Point(sx, sy), Point(sx + dw, sy + dh));
+		im.draw(dr, bgi, nil, bgi.r.min);
+	int BGRrepeat_x =>
+		for(x := sx - ((sx - bgr.min.x + dw - 1) / dw) * dw; x < bgr.max.x; x += dw) {
+			dr := Rect(Point(x, sy), Point(x + dw, sy + dh));
+			im.draw(dr, bgi, nil, bgi.r.min);
+		}
+	int BGRrepeat_y =>
+		for(y := sy - ((sy - bgr.min.y + dh - 1) / dh) * dh; y < bgr.max.y; y += dh) {
+			dr := Rect(Point(sx, y), Point(sx + dw, y + dh));
+			im.draw(dr, bgi, nil, bgi.r.min);
+		}
+	* =>
+		# BGRrepeat: tile both directions
+		for(y := sy - ((sy - bgr.min.y + dh - 1) / dh) * dh; y < bgr.max.y; y += dh) {
+			for(x := sx - ((sx - bgr.min.x + dw - 1) / dw) * dw; x < bgr.max.x; x += dw) {
+				dr := Rect(Point(x, y), Point(x + dw, y + dh));
+				im.draw(dr, bgi, nil, bgi.r.min);
+			}
+		}
+	}
 }
 
 # Draw string in default font at p
@@ -2382,6 +2920,9 @@ markchanges(loc: ref Loc)
 			pick it := loc.le[i].item {
 			Itable =>
 				it.table.flags |= Lchanged;
+			Ibox =>
+				# box sublayout will be redone on relayout
+				;
 			Ifloat =>
 				# whole layout will be redone if layout changes
 				# and there are any floats
@@ -2389,7 +2930,7 @@ markchanges(loc: ref Loc)
 			}
 		LEtablecell =>
 			if(lastf == nil)
-				raise "EXInternal: markchanges no lastf";
+				CU->raisex("EXInternal: markchanges no lastf");
 			c := loc.le[i].tcell;
 			clay := lastf.sublays[c.layid];
 			if(clay != nil)
@@ -2424,7 +2965,7 @@ colorimage(rgb: int) : ref Image
 #			im := display.color(pix);
 			im := display.rgb((rgb>>16)&255, (rgb>>8)&255, rgb&255);
 			if(im == nil)
-				raise sys->sprint("exLayout: can't allocate color #%8.8ux: %r", rgb);
+				CU->raisex(sys->sprint("exLayout: can't allocate color #%8.8ux: %r", rgb));
 			x = ref Colornode(rgb, im, xhd);
 			colorhashtab[hv] = x;
 		}
@@ -2439,7 +2980,7 @@ fillbg(f: ref Frame, r: Rect)
 {
 	bgi: ref Image;
 	ii := f.doc.background.image;
-	if (ii != nil && ii.ci != nil && ii.ci.mims != nil)
+	if (ii != nil && ii.ci != nil && ii.ci.mims != nil && ii.ci.mims[0] != nil)
 		bgi = ii.ci.mims[0].im;
 	if(bgi == nil)
 		bgi = colorimage(f.doc.background.color);
@@ -2642,7 +3183,7 @@ Frame.scrollabs(f : self ref Frame, p : Point)
 	margin := 0;
 	if (lay != nil)
 		margin = lay.margin;
-	x = max(0, min(x, f.totalr.max.x));
+	x = max(0, min(x, f.totalr.max.x + margin - f.cr.dx()));
 	y = max(0, min(y, f.totalr.max.y + margin - f.cr.dy()));
 	(oldx, oldy) := f.viewr.min;
 	if (oldx != x || oldy != y) {
@@ -2794,6 +3335,13 @@ layfind(loc: ref Loc, f: ref Frame, lay: ref Lay, origin, p: Point, it: ref Item
 			if(it == nil && o.y + l.height >= p.y)
 				break;
 		}
+		# Zero-height lines may contain out-of-flow Ibox items (position:absolute/fixed)
+		# that are drawn elsewhere — always search these for hit-testing
+		else if(it == nil && l.height == 0) {
+			lloc := linefind(loc, f, l, o, p, it);
+			if(lloc != nil)
+				return lloc;
+		}
 	}
 	return nil;
 }
@@ -2805,8 +3353,81 @@ linefind(loc: ref Loc, f: ref Frame, l: ref Line, o, p: Point, it: ref Item) : r
 	loc.le[loc.n-1].line = l;
 	x := o.x;
 	y := o.y;
-	inside := 0;
+
+	# First pass: check out-of-flow Ibox items (position:absolute/fixed)
+	# These are drawn at computed positions, not flow positions
+	if(it == nil) {
+		for(i := l.items; i != nil; i = i.next) {
+			pick pi := i {
+			Ibox =>
+				if(pi.cstyle == nil)
+					continue;
+				if(pi.cstyle.position != POSabsolute && pi.cstyle.position != POSfixed)
+					continue;
+				bx := 0; by := 0;
+				bw := 0; bh := 0;
+				case int pi.cstyle.position {
+				int POSabsolute =>
+					bx = f.cr.min.x;
+					by = f.cr.min.y;
+					bw = f.cr.dx();
+					bh = f.cr.dy();
+					if(pi.cstyle.pos_left != STYLNONE)
+						bx += resolvepos(pi.cstyle.pos_left, pi.cstyle.pos_left_ispct, bw);
+					if(pi.cstyle.pos_top != STYLNONE)
+						by += resolvepos(pi.cstyle.pos_top, pi.cstyle.pos_top_ispct, bh);
+				int POSfixed =>
+					bx = f.r.min.x;
+					by = f.r.min.y;
+					bw = f.r.dx();
+					bh = f.r.dy();
+					if(pi.cstyle.pos_left != STYLNONE)
+						bx += resolvepos(pi.cstyle.pos_left, pi.cstyle.pos_left_ispct, bw);
+					if(pi.cstyle.pos_top != STYLNONE)
+						by += resolvepos(pi.cstyle.pos_top, pi.cstyle.pos_top_ispct, bh);
+				}
+				# Apply margin:auto centering (mirrors drawbox)
+				if(pi.cstyle.margin[1] == B->MARGIN_AUTO && pi.cstyle.margin[3] == B->MARGIN_AUTO) {
+					if(bw > pi.width)
+						bx += (bw - pi.width) / 2;
+				}
+				if(bx <= p.x && p.x < bx+pi.width && by <= p.y && p.y < by+pi.height) {
+					if(pi.layid >= 0 && pi.layid < len f.sublays) {
+						slay := f.sublays[pi.layid];
+						if(slay != nil) {
+							cs := pi.cstyle;
+							bdt := 0; bdl := 0; padt := 0; padl := 0;
+							if(cs != nil) {
+								bdt = cs.border_width[0]; bdl = cs.border_width[3];
+								padt = cs.padding[0]; padl = cs.padding[3];
+							}
+							corigin := Point(bx + bdl + padl, by + bdt + padt);
+							lloc := layfind(loc, f, slay, corigin, p, it);
+							if(lloc != nil)
+								return lloc;
+						}
+					}
+					# Click is in the box but not in sublayout content
+					loc.add(LEitem, Point(bx,by));
+					loc.le[loc.n-1].item = i;
+					loc.pos = p.sub(Point(bx,by));
+					return loc;
+				}
+			}
+		}
+	}
+
+	# Second pass: normal in-flow items (original logic)
 	for(i := l.items; i != nil; i = i.next) {
+		# Skip out-of-flow items in normal pass
+		pick ski := i {
+		Ibox =>
+			if(ski.cstyle != nil
+			    && (ski.cstyle.position == POSabsolute || ski.cstyle.position == POSfixed)) {
+				# Don't advance x for out-of-flow items
+				continue;
+			}
+		}
 		if(it != nil || (x <= p.x && p.x < x+i.width)) {
 			yy := y;
 			h := 0;
@@ -2848,6 +3469,33 @@ linefind(loc: ref Loc, f: ref Frame, l: ref Line, o, p: Point, it: ref Item) : r
 				if(lloc != nil)
 					return lloc;
 				# else leave h==0 so p test will fail
+			Ibox =>
+				# In-flow Ibox (static or relative position)
+				bx := x;
+				by := y;
+				if(pi.cstyle != nil && pi.cstyle.position == POSrelative) {
+					bx += resolvepos(pi.cstyle.pos_left, pi.cstyle.pos_left_ispct, f.cr.dx());
+					by += resolvepos(pi.cstyle.pos_top, pi.cstyle.pos_top_ispct, f.cr.dy());
+				}
+				if(it != nil || (bx <= p.x && p.x < bx+pi.width && by <= p.y && p.y < by+pi.height)) {
+					if(pi.layid >= 0 && pi.layid < len f.sublays) {
+						slay := f.sublays[pi.layid];
+						if(slay != nil) {
+							cs := pi.cstyle;
+							bdt := 0; bdl := 0; padt := 0; padl := 0;
+							if(cs != nil) {
+								bdt = cs.border_width[0]; bdl = cs.border_width[3];
+								padt = cs.padding[0]; padl = cs.padding[3];
+							}
+							corigin := Point(bx + bdl + padl, by + bdt + padt);
+							lloc := layfind(loc, f, slay, corigin, p, it);
+							if(lloc != nil)
+								return lloc;
+						}
+					}
+					h = pi.height;
+					yy = by;
+				}
 
 			# floats were handled separately. nulls can be picked by 'it' test
 			# leave h==0, so p test will fail
@@ -2874,7 +3522,7 @@ tablefind(loc: ref Loc, f: ref Frame, ti: ref Item.Itable, torigin: Point, p: Po
 	loc.add(LEitem, torigin);
 	loc.le[loc.n-1].item = ti;
 	t := ti.table;
-	(hsp, vsp, pad, bd, cbd, hsep, vsep) := tableparams(t);
+	(nil, vsp, nil, nil, nil, hsep, vsep) := tableparams(t);
 	if(t.caption_lay >= 0) {
 		caplay := f.sublays[t.caption_lay];
 		capy := torigin.y;
@@ -2936,6 +3584,8 @@ Frame.swapimage(f: self ref Frame, im: ref Item.Iimage, src: string)
 	u = U->mkabs(u, f.doc.base);
 	# width=height=0 finds u if in cache
 	newci := CImage.new(u, nil, 0, 0);
+	if(CU->imcache == nil)
+		return;
 	cachedci := (CU->imcache).look(newci);
 	if(cachedci == nil || cachedci.mims == nil)
 		return;
@@ -2960,7 +3610,7 @@ Frame.focus(f : self ref Frame, focus, raisex : int)
 		if (!focus)
 			kind = E->SEonblur;
 		if(di.evmask & kind)
-			se := ref E->ScriptEvent(kind, f.id, -1, -1, -1, -1, -1, -1, 0, nil, nil, 0);
+			; #se := ref E->ScriptEvent(kind, f.id, -1, -1, -1, -1, -1, -1, 0, nil, nil, 0);
 	}
 }
 
@@ -2968,7 +3618,8 @@ Control.newff(f: ref Frame, ff: ref B->Formfield) : ref Control
 {
 	ans : ref Control = nil;
 	case ff.ftype {
-	Ftext or Fpassword or Ftextarea =>
+	Ftext or Fpassword or Ftextarea
+	or Femail or Furl or Fnumber or Ftel or Fsearch or Fdate or Ftime =>
 		nh := ff.size;
 		nv := 1;
 		linewrap := 0;
@@ -2981,6 +3632,16 @@ Control.newff(f: ref Frame, ff: ref B->Formfield) : ref Control
 		if(ff.ftype == Fpassword)
 			ans.flags |= CFsecure;
 		ans.entryset(ff.value);
+	Fcolor =>
+		# Color input: render as a button with the current color value
+		ans = Control.newbutton(f, nil, nil, ff.value, nil, 0, 1);
+	Frange =>
+		# Range input: render as a text entry showing the value
+		ans = Control.newentry(f, ff.size, 1, 0);
+		val := ff.value;
+		if(val == "")
+			val = "50";
+		ans.entryset(val);
 	Fcheckbox or Fradio =>
 		ans = Control.newcheckbox(f, ff.ftype==Fradio);
 		if((ff.flags&B->FFchecked) != byte 0)
@@ -2992,7 +3653,7 @@ Control.newff(f: ref Frame, ff: ref B->Formfield) : ref Control
 			pick i := ff.image {
 			Iimage =>
 				pic, picmask : ref Image;
-				if(i.ci.mims != nil) {
+				if(i.ci.mims != nil && len i.ci.mims > 0 && i.ci.mims[0] != nil && i.ci.mims[0].im != nil) {
 					pic = i.ci.mims[0].im;
 					picmask = i.ci.mims[0].mask;
 				}
@@ -3044,7 +3705,7 @@ Control.newscroll(f: ref Frame, isvert, length, breadth: int) : ref Control
 	}
 	else
 		maxpt = Point(length, breadth);
-	return ref Control.Cscrollbar(f, nil, Rect(zp,maxpt), flags, nil, 0, 0, 1, 0, nil, (0, 0));
+	return ref Control.Cscrollbar(f, nil, Rect(zp,maxpt), flags, nil, 0, 0, 1, 0, nil, (0, 0), nil);
 }
 
 Control.newentry(f: ref Frame, nh, nv, linewrap: int) : ref Control
@@ -3114,7 +3775,10 @@ Control.newcheckbox(f: ref Frame, isradio: int) : ref Control
 
 Control.newselect(f: ref Frame, nvis: int, options: array of B->Option) : ref Control
 {
-	nvis = min(5, len options);
+	if(nvis <= 0)
+		nvis = min(5, len options);
+	else
+		nvis = min(nvis, len options);
 	if (nvis < 1)
 		nvis = 1;
 	fnt := fonts[CtlFnt].f;
@@ -3207,7 +3871,6 @@ Control.newlabel(f: ref Frame, s: string) : ref Control
 Control.disable(c: self ref Control)
 {
 	if(c.flags & CFenabled) {
-		win := c.f.cim;
 		c.flags &= ~CFenabled;
 		if(c.f.cim != nil)
 			c.draw(1);
@@ -3289,6 +3952,12 @@ Control.scrollset(c: self ref Control, v1, v2, vmax, nsteps, draw: int)
 			v2 = vmax;
 		if(v1 > v2)
 			v1 = v2;
+		# Update widget.m scrollbar if present
+		if(sc.wsb != nil) {
+			sc.wsb.total = vmax;
+			sc.wsb.visible = v2 - v1;
+			sc.wsb.origin = v1;
+		}
 		if(v1 == 0 && v2 == vmax) {
 			sc.mindelta = 1;
 			sc.deltaval = 0;
@@ -3296,20 +3965,15 @@ Control.scrollset(c: self ref Control, v1, v2, vmax, nsteps, draw: int)
 			sc.bot = 0;
 		}
 		else {
-			length, breadth: int;
-			if(sc.flags&CFscrvert) {
+			length: int;
+			if(sc.flags&CFscrvert)
 				length = sc.r.max.y - sc.r.min.y;
-				breadth = sc.r.max.x - sc.r.min.x;
-			}
-			else {
+			else
 				length = sc.r.max.x - sc.r.min.x;
-				breadth = sc.r.max.y - sc.r.min.y;
-			}
-			l := length - (2*breadth + MINSCR);
-			if(l <= 0)
-				l = 1;
+			# Flat scrollbar: no arrow buttons, full track is trough
+			l := length - MINSCR;
 			if(l < 0)
-				raise "EXInternal: negative scrollbar trough";
+				l = 0;
 			sc.top = l*v1/vmax;
 			sc.bot = l*(vmax-v2)/vmax;
 			if (nsteps == 0)
@@ -3493,7 +4157,7 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 			i := 0;
 			iend := len s - 1;
 			if(c.linewrap) {
-				(lines, linestarts, topline, cursline) := entrywrapcalc(c);
+				(lines, linestarts, topline, nil) := entrywrapcalc(c);
 				if(len lines > 1) {
 					lineno := topline + (p.y - (c.r.min.y+ENTVMARGIN)) / ctllinespace;
 					lineno = min(lineno, len lines -1);
@@ -3633,22 +4297,55 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 			}
 		}
 	Cscrollbar =>
+		# Widget.m scrollbar for frame-level scrollbars
+		if(c.wsb != nil && c.ctl == nil) {
+			# Decode B2 events alongside B1
+			b2down := (mtype == E->Mmbuttondown);
+			b2drag := (mtype == E->Mmdrag);
+			# Synthesize a Pointer with correct button mask
+			buttons := 0;
+			if(down || drag)
+				buttons = 1;
+			else if(b2down || b2drag)
+				buttons = 2;
+			ptr := ref Pointer(buttons, p, 0);
+			newo := -1;
+			if(c.wsb.isactive()) {
+				newo = c.wsb.track(ptr);
+				if(newo >= 0) {
+					newgrab = c;
+					changed = 1;
+				}
+			} else if(down || b2down) {
+				newo = c.wsb.event(ptr);
+				if(newo >= 0) {
+					newgrab = c;
+					changed = 1;
+				}
+			}
+			if(newo >= 0) {
+				if(c.flags&CFscrvert)
+					c.f.yscroll(CAscrollabs, newo);
+				else
+					c.f.xscroll(CAscrollabs, newo);
+				changed = 1;
+			}
+		} else {
+		# Legacy scrollbar logic for form controls
 		val := 0;
-		v, vmin, vmax, b: int;
+		v, vmin, vmax: int;
 		if(c.flags&CFscrvert) {
 			v = p.y;
 			vmin = c.r.min.y;
 			vmax = c.r.max.y;
-			b = c.r.dx();
 		}
 		else {
 			v = p.x;
 			vmin = c.r.min.x;
 			vmax = c.r.max.x;
-			b = c.r.dy();
 		}
-		vsltop := vmin+b+c.top;
-		vslbot := vmax-b-c.bot;
+		vsltop := vmin+c.top;
+		vslbot := vmax-c.bot;
 		actflags := 0;
 		oldactflags := c.flags&CFscrallact;
 
@@ -3664,17 +4361,9 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 				actflags = CFactive;
 				repeat = 0;
 			}
-			if(v < vmin+b) {
-				holdval = -1;
-				actflags = CFscracta1;
-			}
 			else if(v < vsltop) {
 				holdval = -1;
 				actflags = CFscracttr1;
-			}
-			else if(v >= vmax-b) {
-				holdval = 1;
-				actflags = CFscracta2;
 			}
 			else if(v >= vslbot) {
 				holdval = 1;
@@ -3688,7 +4377,6 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 		if (drag) {
 			(actflags, val) = c.holdstate;
 			if (actflags == CFactive) {
-				# dragging main scroll widget (relative to top of drag block)
 				val = (v - vsltop) - val;
 				if(abs(val) >= c.mindelta) {
 					ans = CAscrolldelta;
@@ -3699,8 +4387,6 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 			}
 		}
 		if (up || hold) {
-			# set the action according to the hold state
-			# Note: main widget (case CFactive) handled by drag
 			act := 0;
 			(act, val) = c.holdstate;
 			case act {
@@ -3713,7 +4399,7 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 			}
 			if (up) {
 				c.holdstate = (0, 0);
-			} else { # hold
+			} else {
 				(actflags, nil) = c.holdstate;
 				if (ans != CAnone) {
 					E->autorepeat(ref (Event.Emouse)(p, E->Mhold), ARTICK, ARTICK);
@@ -3723,7 +4409,6 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 		}
 		c.flags = (c.flags & ~CFscrallact) | actflags;
 		if(ans != CAnone) {
-			ftoscroll := c.f;
 			if(c.ctl != nil) {
 				pick cff := c.ctl {
 				Centry =>
@@ -3736,12 +4421,7 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 					CAscrollline =>
 						topline += val;
 					CAscrolldelta =>
-#						# insufficient for large number of lines
 						topline += val;
-#						if(val > 0)
-#							topline++;
-#						else
-#							topline--;
 					}
 					if (topline+ny >= nlines)
 						topline = (nlines-1) - ny;
@@ -3759,12 +4439,7 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 					CAscrollline =>
 						newfirst += val;
 					CAscrolldelta =>
-#						# insufficient for very long select lists
 						newfirst += val;
-#						if(val > 0)
-#							newfirst++;
-#						else
-#							newfirst--;
 					}
 					newfirst = max(0, min(newfirst, len cff.options - cff.nvis));
 					cff.first = newfirst;
@@ -3782,15 +4457,10 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 							newfirst += val;
 						CAscrolldelta =>
 							newfirst += val;
-#							if(val > 0)
-#								newfirst++;
-#							else
-#								newfirst--;
 						}
 						newfirst = max(0, min(newfirst, len cff.options - cff.nvis));
 						cff.first = newfirst;
 						c.scrollset(newfirst, newfirst+cff.nvis, len cff.options, 0, 1);
-						# TODO: need redraw only vscr and content
 					}
 					else {
 						hw := cff.maxcol;
@@ -3813,7 +4483,6 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 							newstart = max(0, min(newstart, hw - w));
 						cff.start = newstart;
 						c.scrollset(newstart, w+newstart, hw, 0, 1);
-						# TODO: need redraw only hscr and content
 					}
 					cff.draw(1);
 					return (ans, newgrab);
@@ -3830,6 +4499,7 @@ Control.domouse(ctl: self ref Control, p: Point, mtype: int, oldgrab : ref Contr
 		else if(actflags != oldactflags) {
 			changed = 1;
 		}
+		} # end legacy scrollbar
 	}
 	if(changed)
 		ctl.draw(1);
@@ -3957,19 +4627,20 @@ Control.reset(ctl: self ref Control)
 Control.draw(ctl: self ref Control, flush: int)
 {
 	win := ctl.f.cim;
-	if (ctl.popup != nil)
-		win = ctl.popup.image;
 	if (win == nil)
 		return;
 	oclipr := win.clipr;
 	clipr := oclipr;
 	any: int;
-	if (ctl.popup == nil) {
-		(clipr, any) = ctl.r.clip(ctl.f.cr);
-		if(!any && ctl != ctl.f.vscr && ctl != ctl.f.hscr)
+	(clipr, any) = ctl.r.clip(ctl.f.cr);
+	if(!any) {
+		if(ctl != ctl.f.vscr && ctl != ctl.f.hscr)
 			return;
-		win.clipr = clipr;
+		# Frame scrollbars are positioned outside f.cr (to its right/below).
+		# Clip to the scrollbar's own rect so it draws in its correct column.
+		clipr = ctl.r;
 	}
+	win.clipr = clipr;
 	pick c := ctl {
 	Cbutton =>
 		if(c.ff != nil && c.ff.image != nil && c.pic == nil) {
@@ -3978,7 +4649,7 @@ Control.draw(ctl: self ref Control, flush: int)
 			# this code is only for when the HTML specified the dimensions)
 			pick imi := c.ff.image {
 			Iimage =>
-				if(imi.ci.mims != nil) {
+				if(imi.ci.mims != nil && len imi.ci.mims > 0 && imi.ci.mims[0] != nil && imi.ci.mims[0].im != nil) {
 					c.pic = imi.ci.mims[0].im;
 					c.picmask = imi.ci.mims[0].mask;
 				}
@@ -4096,6 +4767,11 @@ Control.draw(ctl: self ref Control, flush: int)
 			}
 			q = (p.x, q.y + ctllinespace);
 		}
+		# HTML5 placeholder text: show when entry is empty and has no focus
+		if(c.s == "" && c.ff != nil && c.ff.placeholder != "" && !(c.flags & CFhasfocus)) {
+			phcolor := colorimage(DarkGrey);
+			win.text(p, phcolor, zp, fnt, c.ff.placeholder);
+		}
 	Ccheckbox=>
 		win.draw(c.r, colorimage(White), nil, zp);
 		if(c.isradio) {
@@ -4192,61 +4868,41 @@ Control.draw(ctl: self ref Control, flush: int)
 		drawrelief(win, insetr, ReliefSunk);
 
 	Cscrollbar =>
-		# Scrollbar components: arrow 1 (a1), trough 1 (t1), slider (s), trough 2 (t2), arrow 2 (a2)
-		x := c.r.min.x;
-		y := c.r.min.y;
-		ra1, rt1, rs, rt2, ra2: Rect;
-		b, l, a1kind, a2kind: int;
-		if(c.flags&CFscrvert) {
-			l = c.r.max.y - c.r.min.y;
-			b = c.r.max.x - c.r.min.x;
-			xr := x+b;
-			yt1 := y+b;
-			ys := yt1+c.top;
-			yb := y+l;
-			ya2 := yb-b;
-			yt2 := ya2-c.bot;
-			ra1 = Rect(Point(x,y),Point(xr,yt1));
-			rt1 = Rect(Point(x,yt1),Point(xr,ys));
-			rs = Rect(Point(x,ys),Point(xr,yt2));
-			rt2 = Rect(Point(x,yt2),Point(xr,ya2));
-			ra2 = Rect(Point(x,ya2),Point(xr,yb));
-			a1kind = TRIup;
-			a2kind = TRIdown;
+		if(c.wsb != nil) {
+			# Delegate to widget.m scrollbar
+			c.wsb.draw(win);
+		} else {
+			# Flat scrollbar fallback for form controls
+			SCRTRACK: con 16rE8E8E8;
+			SCRTHUMB: con 16rBBBBBB;
+			x := c.r.min.x;
+			y := c.r.min.y;
+			rs: Rect;
+			if(c.flags&CFscrvert) {
+				l := c.r.max.y - c.r.min.y;
+				b := c.r.max.x - c.r.min.x;
+				win.draw(c.r, colorimage(SCRTRACK), nil, zp);
+				if(l > MINSCR) {
+					ys := y + c.top;
+					yt2 := y + l - c.bot;
+					rs = Rect(Point(x+2, ys), Point(x+b-2, yt2));
+					if(rs.dy() >= MINSCR)
+						win.draw(rs, colorimage(SCRTHUMB), nil, zp);
+				}
+			}
+			else {
+				l := c.r.max.x - c.r.min.x;
+				b := c.r.max.y - c.r.min.y;
+				win.draw(c.r, colorimage(SCRTRACK), nil, zp);
+				if(l > MINSCR) {
+					xs := x + c.top;
+					xt2 := x + l - c.bot;
+					rs = Rect(Point(xs, y+2), Point(xt2, y+b-2));
+					if(rs.dx() >= MINSCR)
+						win.draw(rs, colorimage(SCRTHUMB), nil, zp);
+				}
+			}
 		}
-		else {
-			l = c.r.max.x - c.r.min.x;
-			b = c.r.max.y - c.r.min.y;
-			yb := y+b;
-			xt1 := x+b;
-			xs := xt1+c.top;
-			xr := x+l;
-			xa2 := xr-b;
-			xt2 := xa2-c.bot;
-			ra1 = Rect(Point(x,y),Point(xt1,yb));
-			rt1 = Rect(Point(xt1,y),Point(xs,yb));
-			rs = Rect(Point(xs,y),Point(xt2,yb));
-			rt2 = Rect(Point(xt2,y),Point(xa2,yb));
-			ra2 = Rect(Point(xa2,y),Point(xr,yb));
-			a1kind = TRIleft;
-			a2kind = TRIright;
-		}
-		a1relief := ReliefRaised;
-		if(c.flags&CFscracta1)
-			a1relief = ReliefSunk;
-		a2relief := ReliefRaised;
-		if(c.flags&CFscracta2)
-			a2relief = ReliefSunk;
-		drawtriangle(win, ra1, a1kind, a1relief);
-		drawtriangle(win, ra2, a2kind, a2relief);
-		drawfill(win, rt1, Grey);
-		rs = rs.inset(2);
-		drawfill(win, rs, Grey);
-		rsrelief := ReliefRaised;
-		if(c.flags&CFactive)
-			rsrelief = ReliefSunk;
-		drawrelief(win, rs, rsrelief);
-		drawfill(win, rt2, Grey);
 	Canimimage =>
 		i := c.cur;
 		if(c.redraw)
@@ -4263,7 +4919,7 @@ Control.draw(ctl: self ref Control, flush: int)
 			}
 		}
 		bgi := colorimage(c.bg.color);
-		if(c.bg.image != nil && c.bg.image.ci != nil && len c.bg.image.ci.mims > 0)
+		if(c.bg.image != nil && c.bg.image.ci != nil && c.bg.image.ci.mims != nil && len c.bg.image.ci.mims > 0 && c.bg.image.ci.mims[0] != nil && c.bg.image.ci.mims[0].im != nil)
 			bgi = c.bg.image.ci.mims[0].im;
 		for( ; i <= c.cur; i++) {
 			mim := c.cim.mims[i];
@@ -4290,10 +4946,7 @@ Control.draw(ctl: self ref Control, flush: int)
 		win.text(p, colorimage(Black), zp, fonts[DefFnt].f, c.s);
 	}
 	if(flush) {
-		if (ctl.popup != nil)
-			ctl.popup.flush(ctl.r);
-		else
-			G->flush(ctl.r);
+		G->flush(ctl.r);
 	}
 	win.clipr = oclipr;
 }
@@ -4412,7 +5065,7 @@ Control.entryset(c: self ref Control, s: string)
 entryupdown(e: ref Control.Centry, cur : int, delta : int) : int
 {
 	e.sel = (cur, cur);
-	(lines, linestarts, topline, cursline) := entrywrapcalc(e);
+	(lines, linestarts, nil, cursline) := entrywrapcalc(e);
 	newl := cursline + delta;
 	if (newl < 0 || newl >= len lines)
 		return cur;
@@ -4531,7 +5184,7 @@ entryscroll(e: ref Control.Centry)
 		# at the beginning of the topmost visible line,
 		# and we just want to scroll to make sure that
 		# the line with the cursor is visible
-		(lines, linestarts, topline, cursline) := entrywrapcalc(e);
+		(nil, linestarts, topline, cursline) := entrywrapcalc(e);
 		vislines := (e.r.dy()-2*ENTVMARGIN) / ctllinespace;
 		nlines := len linestarts;
 		if(cursline < topline)
@@ -4597,7 +5250,10 @@ entrywrapcalc(e: ref Control.Centry) : (array of string, array of int, int, int)
 Lay.new(targwidth: int, just: byte, margin: int, bg: Background) : ref Lay
 {
 	ans := ref Lay(Line.new(), Line.new(),
-			targwidth, 0, 0, margin, nil, bg, just, byte 0);
+			targwidth, 0, 0, margin, nil, bg, just, byte 0,
+			0,	# last_margin_bottom
+			0, STYLNONE, STYLNONE, STYLNONE, byte 0,
+			WBnormal, TOclip);
 	if(ans.targetwidth < 0)
 		ans.targetwidth = 0;
 	ans.start.pos = Point(margin, margin);
@@ -4771,7 +5427,7 @@ animproc(f: ref Frame)
 		pick i := it {
 		Iimage =>
 			ms := i.ci.mims;
-			if(len ms > 1) {
+			if(ms != nil && len ms > 1) {
 				loc := f.find(zp, it);
 				if(loc == nil) {
 					# could be background, I suppose -- don't animate it
@@ -4803,7 +5459,6 @@ animproc(f: ref Frame)
 		tot = tot + big del;
 		newdel := 10000000;
 		for(al := aits; al != nil; al = tl al) {
-			it := hd al;
 			pick i := hd al {
 			Iimage =>
 				ms := i.ci.mims;
@@ -4829,4 +5484,1467 @@ animproc(f: ref Frame)
 		}
 		del = newdel;
 	}
+}
+
+# Apply CSS text-transform to all Itext items in an item list
+applytexttransform(items: ref Item, tt: byte)
+{
+	for(it := items; it != nil; it = it.next) {
+		pick t := it {
+		Itext =>
+			if(t.s == nil || len t.s == 0)
+				continue;
+			case int tt {
+			int B->TTuppercase =>
+				t.s = S->toupper(t.s);
+			int B->TTlowercase =>
+				t.s = S->tolower(t.s);
+			int B->TTcapitalize =>
+				s := t.s;
+				capnext := 1;
+				for(i := 0; i < len s; i++) {
+					c := s[i];
+					if(capnext && c >= 'a' && c <= 'z')
+						s[i] = c - ('a' - 'A');
+					capnext = (c == ' ' || c == '\t' || c == '\n');
+				}
+				t.s = s;
+			}
+		}
+	}
+}
+
+# Size an Ibox item using a sublayout, similar to how table cells work.
+# The box gets its own Lay where content is laid out.
+# availwidth is the available line width for sizing (used for inline-block
+# shrink-to-fit and percentage width calculations).
+checkboxsize(f: ref Frame, it: ref Item, box: ref Item.Ibox, availwidth: int)
+{
+	cs := box.cstyle;
+	padl := 0;
+	padr := 0;
+	padt := 0;
+	padb := 0;
+	bdl := 0;
+	bdr := 0;
+	bdt := 0;
+	bdb := 0;
+	if(cs != nil) {
+		padl = cs.padding[3];
+		padr = cs.padding[1];
+		padt = cs.padding[0];
+		padb = cs.padding[2];
+		bdl = cs.border_width[3];
+		bdr = cs.border_width[1];
+		bdt = cs.border_width[0];
+		bdb = cs.border_width[2];
+	}
+	extraw := padl + padr + bdl + bdr;
+	extrah := padt + padb + bdt + bdb;
+
+	# Calculate available width for content
+	isinline := cs != nil && cs.display == DSPINLINEBLOCK;
+	avail: int;
+	if(isinline) {
+		# inline-block: use available line width for shrink-to-fit
+		avail = availwidth;
+		if(avail <= 0)
+			avail = 400;
+	} else {
+		# Block-level boxes: prefer available line width, fall back to item width
+		avail = availwidth;
+		if(avail <= 0)
+			avail = it.width;
+		if(avail <= 0)
+			avail = 600;	# reasonable default
+	}
+	contentw := avail - extraw;
+	if(contentw < 10)
+		contentw = 10;
+
+	# Use width spec from computed style if present
+	if(cs != nil && cs.width.kind() == Dpixels) {
+		if(cs.box_sizing == BSZborder)
+			contentw = cs.width.spec() - extraw;
+		else
+			contentw = cs.width.spec();
+	}
+	else if(cs != nil && cs.width.kind() == Dpercent && avail > 0)
+		contentw = avail * cs.width.spec() / 100 - extraw;
+
+	# Apply min/max width constraints to content width before sublayout
+	if(cs != nil) {
+		if(cs.max_width.kind() == Dpixels && contentw > cs.max_width.spec())
+			contentw = cs.max_width.spec();
+		if(cs.min_width.kind() == Dpixels && contentw < cs.min_width.spec())
+			contentw = cs.min_width.spec();
+	}
+
+	# Create sublayout for box content
+	bg := Background(nil, -1);
+	if(cs != nil && cs.bgcolor != STYLNONE)
+		bg.color = cs.bgcolor;
+	if(box.layid < 0) {
+		slay := Lay.new(contentw, Aleft, 0, bg);
+		box.layid = f.sublayid++;
+		if(box.layid >= len f.sublays) {
+			newsublays := array[box.layid + 10] of ref Lay;
+			newsublays[:] = f.sublays;
+			f.sublays = newsublays;
+		}
+		f.sublays[box.layid] = slay;
+	}
+	slay := f.sublays[box.layid];
+	slay.targetwidth = contentw;
+	slay.background = bg;
+
+	# Propagate CSS text properties from ComputedStyle to sublayout
+	if(cs != nil) {
+		slay.text_indent = cs.text_indent;
+		slay.line_height = cs.line_height;
+		slay.letter_spacing = cs.letter_spacing;
+		slay.word_spacing = cs.word_spacing;
+		slay.white_space = cs.white_space;
+		slay.word_break = cs.word_break;
+		slay.text_overflow = cs.text_overflow;
+		if(cs.halign != Anone) {
+			if(cs.halign == Acenter)
+				slay.just = Acenter;
+			else if(cs.halign == Aright)
+				slay.just = Aright;
+			else
+				slay.just = Aleft;
+		}
+	}
+
+	# CSS text-transform: transform text content before layout
+	if(cs != nil && cs.text_transform != B->TTnone)
+		applytexttransform(box.content, cs.text_transform);
+
+	# Grid, flexbox, or normal flow layout
+	if(cs != nil && (cs.display == DSPgrid || cs.display == DSPinline_grid))
+		laygriditems(f, slay, box.content, cs);
+	else if(cs != nil && (cs.display == DSPflex || cs.display == DSPinline_flex))
+		layflexitems(f, slay, box.content, cs);
+	else
+		layalistitems(f, slay, box.content);
+
+	it.width = slay.width + extraw;
+	it.height = slay.height + extrah;
+	it.ascent = it.height;
+
+	# Enforce CSS width spec: block boxes should be at least as wide as specified
+	if(cs != nil && cs.width.kind() == Dpixels) {
+		specw: int;
+		if(cs.box_sizing == BSZborder)
+			specw = cs.width.spec();
+		else
+			specw = cs.width.spec() + extraw;
+		if(it.width < specw)
+			it.width = specw;
+	} else if(cs != nil && cs.width.kind() == Dpercent && avail > 0) {
+		specw := avail * cs.width.spec() / 100;
+		if(it.width < specw)
+			it.width = specw;
+	}
+
+	# Apply height spec if present
+	if(cs != nil && cs.height.kind() == Dpixels) {
+		spech: int;
+		if(cs.box_sizing == BSZborder)
+			spech = cs.height.spec();
+		else
+			spech = cs.height.spec() + extrah;
+		# When overflow is hidden/scroll/auto, clamp to spec height
+		if(cs.overflow != OVvisible && cs.overflow != byte 0)
+			it.height = spech;
+		else if(spech > it.height)
+			it.height = spech;
+	}
+
+	# Enforce min/max constraints on final dimensions
+	if(cs != nil) {
+		if(cs.min_width.kind() == Dpixels && it.width < cs.min_width.spec() + extraw)
+			it.width = cs.min_width.spec() + extraw;
+		if(cs.max_width.kind() == Dpixels && it.width > cs.max_width.spec() + extraw)
+			it.width = cs.max_width.spec() + extraw;
+		if(cs.min_height.kind() == Dpixels && it.height < cs.min_height.spec() + extrah)
+			it.height = cs.min_height.spec() + extrah;
+		if(cs.max_height.kind() == Dpixels && it.height > cs.max_height.spec() + extrah)
+			it.height = cs.max_height.spec() + extrah;
+	}
+
+	# Step 6: Background image with explicit height — use spec height even if content is empty
+	if(cs != nil && cs.bgimage_url != nil && cs.height.kind() == Dpixels && it.height < cs.height.spec() + extrah)
+		it.height = cs.height.spec() + extrah;
+}
+
+# Draw an Ibox item: box-shadow, background, borders, then content via sublayout
+drawbox(f: ref Frame, lay: ref Lay, origin: Point, box: ref Item.Ibox, cb: ref ContainingBlock)
+{
+	im := f.cim;
+	cs := box.cstyle;
+	bdt := 0; bdr := 0; bdb := 0; bdl := 0;
+	padt := 0; padr := 0; padb := 0; padl := 0;
+	if(cs != nil) {
+		bdt = cs.border_width[0];
+		bdr = cs.border_width[1];
+		bdb = cs.border_width[2];
+		bdl = cs.border_width[3];
+		padt = cs.padding[0];
+		padr = cs.padding[1];
+		padb = cs.padding[2];
+		padl = cs.padding[3];
+	}
+
+	# margin: auto — center block horizontally within available width
+	if(cs != nil && cs.margin[1] == B->MARGIN_AUTO && cs.margin[3] == B->MARGIN_AUTO) {
+		avail := 0;
+		if(lay != nil)
+			avail = lay.targetwidth;
+		else
+			avail = f.cr.dx();
+		if(avail > box.width) {
+			offset := (avail - box.width) / 2;
+			origin.x += offset;
+		}
+	} else if(cs != nil) {
+		# Apply non-auto left margin as offset
+		if(cs.margin[3] > 0)
+			origin.x += cs.margin[3];
+	}
+	# Apply top margin
+	if(cs != nil && cs.margin[0] > 0 && cs.margin[0] != B->MARGIN_AUTO)
+		origin.y += cs.margin[0];
+
+	# Skip rendering if visibility is hidden
+	if(cs != nil && cs.visibility == VIShidden)
+		return;
+
+	# Draw box-shadow (behind everything)
+	if(cs != nil && cs.box_shadow_color != STYLNONE) {
+		sx := cs.box_shadow_x;
+		sy := cs.box_shadow_y;
+		blur := cs.box_shadow_blur;
+		shadowr := Rect(
+			Point(origin.x + sx, origin.y + sy),
+			Point(origin.x + box.width + sx, origin.y + box.height + sy));
+		# Approximate blur by expanding shadow rect
+		if(blur > 0)
+			shadowr = shadowr.inset(-blur/2);
+		drawfill(im, shadowr, cs.box_shadow_color);
+	}
+
+	# Draw background (padding box) with border-radius support
+	if(cs != nil && cs.bgcolor != STYLNONE && cs.bgcolor != -1) {
+		bgr := Rect(
+			Point(origin.x + bdl, origin.y + bdt),
+			Point(origin.x + box.width - bdr, origin.y + box.height - bdb));
+		hasradius := cs.border_radius[0] > 0 || cs.border_radius[1] > 0
+			|| cs.border_radius[2] > 0 || cs.border_radius[3] > 0;
+		if(hasradius)
+			drawroundedfill(im, bgr, cs.bgcolor, cs.border_radius);
+		else
+			drawfill(im, bgr, cs.bgcolor);
+	}
+
+	# Draw background image (in padding box, after bgcolor, before borders)
+	if(cs != nil && cs.bgimage_ci != nil && cs.bgimage_ci.mims != nil) {
+		bgr := Rect(
+			Point(origin.x + bdl, origin.y + bdt),
+			Point(origin.x + box.width - bdr, origin.y + box.height - bdb));
+		drawbgimage(im, bgr, cs);
+	}
+
+	# Draw borders
+	if(cs != nil) {
+		hasradius := cs.border_radius[0] > 0 || cs.border_radius[1] > 0
+			|| cs.border_radius[2] > 0 || cs.border_radius[3] > 0;
+		if(hasradius)
+			drawroundedborders(im, origin, box.width, box.height, cs);
+		else
+			drawboxborders(im, origin, box.width, box.height, cs);
+	}
+
+	# Draw content via sublayout
+	if(box.layid >= 0 && box.layid < len f.sublays) {
+		slay := f.sublays[box.layid];
+		if(slay != nil) {
+			contentorigin := Point(origin.x + bdl + padl, origin.y + bdt + padt);
+			# Positioned boxes establish a new containing block for descendants
+			childcb := cb;
+			if(cs != nil && cs.position != POSstatic)
+				childcb = ref ContainingBlock(origin, box.width, box.height);
+			# Clip content for overflow: hidden/scroll/auto
+			if(cs != nil && cs.overflow != OVvisible && cs.overflow != byte 0) {
+				oclipr := im.clipr;
+				contentr := Rect(
+					Point(origin.x + bdl + padl, origin.y + bdt + padt),
+					Point(origin.x + box.width - bdr - padr, origin.y + box.height - bdb - padb));
+				# Intersect with existing clip rect
+				(cr, any) := contentr.clip(oclipr);
+				if(any) {
+					im.clipr = cr;
+					drawlay(f, slay, contentorigin, childcb);
+					im.clipr = oclipr;
+				}
+			}
+			else
+				drawlay(f, slay, contentorigin, childcb);
+		}
+	}
+
+	# Draw outline (outside the border, doesn't affect layout)
+	if(cs != nil && cs.outline_width > 0 && cs.outline_style != BSnone) {
+		ow := cs.outline_width;
+		ooff := cs.outline_offset;
+		oc := cs.outline_color;
+		if(oc == STYLNONE)
+			oc = cs.color;
+		if(oc == STYLNONE)
+			oc = 16r000000;	# default to black
+		outliner := Rect(
+			Point(origin.x - ow - ooff, origin.y - ow - ooff),
+			Point(origin.x + box.width + ow + ooff, origin.y + box.height + ow + ooff));
+		drawborder(im, outliner, ow, oc);
+	}
+}
+
+# Draw CSS box borders with per-side width, style, and color
+drawboxborders(im: ref Image, origin: Point, w, h: int, cs: ref ComputedStyle)
+{
+	x := origin.x;
+	y := origin.y;
+	xr := x + w;
+	yb := y + h;
+
+	# Top border
+	if(cs.border_width[0] > 0 && cs.border_style[0] != BSnone) {
+		c := cs.border_color[0];
+		if(c == STYLNONE)
+			c = Black;
+		n := cs.border_width[0];
+		drawborderedge(im, Rect(Point(x,y), Point(xr,y+n)), c, cs.border_style[0]);
+	}
+	# Right border
+	if(cs.border_width[1] > 0 && cs.border_style[1] != BSnone) {
+		c := cs.border_color[1];
+		if(c == STYLNONE)
+			c = Black;
+		n := cs.border_width[1];
+		drawborderedge(im, Rect(Point(xr-n,y), Point(xr,yb)), c, cs.border_style[1]);
+	}
+	# Bottom border
+	if(cs.border_width[2] > 0 && cs.border_style[2] != BSnone) {
+		c := cs.border_color[2];
+		if(c == STYLNONE)
+			c = Black;
+		n := cs.border_width[2];
+		drawborderedge(im, Rect(Point(x,yb-n), Point(xr,yb)), c, cs.border_style[2]);
+	}
+	# Left border
+	if(cs.border_width[3] > 0 && cs.border_style[3] != BSnone) {
+		c := cs.border_color[3];
+		if(c == STYLNONE)
+			c = Black;
+		n := cs.border_width[3];
+		drawborderedge(im, Rect(Point(x,y), Point(x+n,yb)), c, cs.border_style[3]);
+	}
+}
+
+# Draw a single border edge with style
+drawborderedge(im: ref Image, r: Rect, color: int, style: byte)
+{
+	src := colorimage(color);
+	case int style {
+	int BSsolid or int BSinset or int BSoutset or int BSgroove or int BSridge =>
+		im.draw(r, src, nil, zp);
+	int BSdotted =>
+		# Draw dotted by alternating filled/empty segments
+		if(r.dx() > r.dy()) {
+			# horizontal edge
+			step := max(r.dy(), 2);
+			for(x := r.min.x; x < r.max.x; x += step*2)
+				im.draw(Rect(Point(x, r.min.y), Point(min(x+step, r.max.x), r.max.y)), src, nil, zp);
+		}
+		else {
+			# vertical edge
+			step := max(r.dx(), 2);
+			for(y := r.min.y; y < r.max.y; y += step*2)
+				im.draw(Rect(Point(r.min.x, y), Point(r.max.x, min(y+step, r.max.y))), src, nil, zp);
+		}
+	int BSdashed =>
+		# Draw dashed by alternating segments (3:1 ratio)
+		if(r.dx() > r.dy()) {
+			step := max(r.dy()*3, 6);
+			gap := max(r.dy(), 2);
+			for(x := r.min.x; x < r.max.x; x += step+gap)
+				im.draw(Rect(Point(x, r.min.y), Point(min(x+step, r.max.x), r.max.y)), src, nil, zp);
+		}
+		else {
+			step := max(r.dx()*3, 6);
+			gap := max(r.dx(), 2);
+			for(y := r.min.y; y < r.max.y; y += step+gap)
+				im.draw(Rect(Point(r.min.x, y), Point(r.max.x, min(y+step, r.max.y))), src, nil, zp);
+		}
+	int BSdouble =>
+		# Draw double border: two lines with gap between
+		if(r.dx() > r.dy()) {
+			# horizontal: split height into thirds
+			n := max(r.dy()/3, 1);
+			im.draw(Rect(r.min, Point(r.max.x, r.min.y+n)), src, nil, zp);
+			im.draw(Rect(Point(r.min.x, r.max.y-n), r.max), src, nil, zp);
+		}
+		else {
+			n := max(r.dx()/3, 1);
+			im.draw(Rect(r.min, Point(r.min.x+n, r.max.y)), src, nil, zp);
+			im.draw(Rect(Point(r.max.x-n, r.min.y), r.max), src, nil, zp);
+		}
+	}
+}
+
+# Draw a filled rectangle with rounded corners using corner arcs
+drawroundedfill(im: ref Image, r: Rect, color: int, radii: array of int)
+{
+	src := colorimage(color);
+	# Fill the center rectangles (cross shape)
+	rtl := radii[0]; rtr := radii[1]; rbr := radii[2]; rbl := radii[3];
+	# Clamp radii to half the rect dimensions
+	hw := r.dx() / 2;
+	hh := r.dy() / 2;
+	if(rtl > hw) rtl = hw;
+	if(rtl > hh) rtl = hh;
+	if(rtr > hw) rtr = hw;
+	if(rtr > hh) rtr = hh;
+	if(rbr > hw) rbr = hw;
+	if(rbr > hh) rbr = hh;
+	if(rbl > hw) rbl = hw;
+	if(rbl > hh) rbl = hh;
+	maxrt := max(rtl, rtr);
+	maxrb := max(rbl, rbr);
+	# Fill center horizontal band
+	im.draw(Rect(Point(r.min.x, r.min.y+maxrt), Point(r.max.x, r.max.y-maxrb)), src, nil, zp);
+	# Fill top band (between corners)
+	im.draw(Rect(Point(r.min.x+rtl, r.min.y), Point(r.max.x-rtr, r.min.y+maxrt)), src, nil, zp);
+	# Fill bottom band (between corners)
+	im.draw(Rect(Point(r.min.x+rbl, r.max.y-maxrb), Point(r.max.x-rbr, r.max.y)), src, nil, zp);
+	# Fill corner arcs using ellipse
+	if(rtl > 0)
+		im.fillellipse(Point(r.min.x+rtl, r.min.y+rtl), rtl, rtl, src, zp);
+	if(rtr > 0)
+		im.fillellipse(Point(r.max.x-rtr, r.min.y+rtr), rtr, rtr, src, zp);
+	if(rbr > 0)
+		im.fillellipse(Point(r.max.x-rbr, r.max.y-rbr), rbr, rbr, src, zp);
+	if(rbl > 0)
+		im.fillellipse(Point(r.min.x+rbl, r.max.y-rbl), rbl, rbl, src, zp);
+}
+
+# Draw rounded borders (outline arcs at corners + straight edges between)
+drawroundedborders(im: ref Image, origin: Point, w, h: int, cs: ref ComputedStyle)
+{
+	x := origin.x;
+	y := origin.y;
+	xr := x + w;
+	yb := y + h;
+	rtl := cs.border_radius[0];
+	rtr := cs.border_radius[1];
+	rbr := cs.border_radius[2];
+	rbl := cs.border_radius[3];
+	# Clamp radii
+	hw := w / 2;
+	hh := h / 2;
+	if(rtl > hw) rtl = hw;
+	if(rtl > hh) rtl = hh;
+	if(rtr > hw) rtr = hw;
+	if(rtr > hh) rtr = hh;
+	if(rbr > hw) rbr = hw;
+	if(rbr > hh) rbr = hh;
+	if(rbl > hw) rbl = hw;
+	if(rbl > hh) rbl = hh;
+
+	# Top border (between TL and TR corners)
+	if(cs.border_width[0] > 0 && cs.border_style[0] != BSnone) {
+		c := cs.border_color[0];
+		if(c == STYLNONE) c = Black;
+		n := cs.border_width[0];
+		src := colorimage(c);
+		im.draw(Rect(Point(x+rtl, y), Point(xr-rtr, y+n)), src, nil, zp);
+		# Draw corner arcs
+		if(rtl > 0)
+			im.arc(Point(x+rtl, y+rtl), rtl, rtl, n-1, src, zp, 45, 90);
+		if(rtr > 0)
+			im.arc(Point(xr-rtr, y+rtr), rtr, rtr, n-1, src, zp, 0, 45);
+	}
+	# Right border
+	if(cs.border_width[1] > 0 && cs.border_style[1] != BSnone) {
+		c := cs.border_color[1];
+		if(c == STYLNONE) c = Black;
+		n := cs.border_width[1];
+		src := colorimage(c);
+		im.draw(Rect(Point(xr-n, y+rtr), Point(xr, yb-rbr)), src, nil, zp);
+		if(rtr > 0)
+			im.arc(Point(xr-rtr, y+rtr), rtr, rtr, n-1, src, zp, 315, 45);
+		if(rbr > 0)
+			im.arc(Point(xr-rbr, yb-rbr), rbr, rbr, n-1, src, zp, 270, 45);
+	}
+	# Bottom border
+	if(cs.border_width[2] > 0 && cs.border_style[2] != BSnone) {
+		c := cs.border_color[2];
+		if(c == STYLNONE) c = Black;
+		n := cs.border_width[2];
+		src := colorimage(c);
+		im.draw(Rect(Point(x+rbl, yb-n), Point(xr-rbr, yb)), src, nil, zp);
+		if(rbr > 0)
+			im.arc(Point(xr-rbr, yb-rbr), rbr, rbr, n-1, src, zp, 225, 45);
+		if(rbl > 0)
+			im.arc(Point(x+rbl, yb-rbl), rbl, rbl, n-1, src, zp, 180, 45);
+	}
+	# Left border
+	if(cs.border_width[3] > 0 && cs.border_style[3] != BSnone) {
+		c := cs.border_color[3];
+		if(c == STYLNONE) c = Black;
+		n := cs.border_width[3];
+		src := colorimage(c);
+		im.draw(Rect(Point(x, y+rtl), Point(x+n, yb-rbl)), src, nil, zp);
+		if(rtl > 0)
+			im.arc(Point(x+rtl, y+rtl), rtl, rtl, n-1, src, zp, 135, 45);
+		if(rbl > 0)
+			im.arc(Point(x+rbl, yb-rbl), rbl, rbl, n-1, src, zp, 180, 45);
+	}
+}
+
+# Layout a list of items into a Lay (used for Ibox sublayouts)
+layalistitems(f: ref Frame, lay: ref Lay, items: ref Item)
+{
+	measure(f, items);
+	for(l := lay.start; l.next != lay.end; ) {
+		nl := l.next;
+		l.next = nl.next;
+	}
+	lay.start.next = lay.end;
+	lay.end.prev = lay.start;
+	lay.width = 0;
+	lay.height = 0;
+	for(it := items; it != nil; ) {
+		nl := Line.new();
+		nl.items = it;
+		# Find end of this line (next break or end)
+		lastit := it;
+		nit := it.next;
+		for(; nit != nil; nit = nit.next) {
+			if(nit.state & IFbrk)
+				break;
+			lastit = nit;
+		}
+		lastit.next = nil;
+		it = nit;
+		# Insert line before lay.end
+		nl.prev = lay.end.prev;
+		nl.next = lay.end;
+		lay.end.prev.next = nl;
+		lay.end.prev = nl;
+		nl.flags |= Lchanged;
+		fixlinegeom(f, lay, nl);
+	}
+	# Calculate lay dimensions
+	for(l = lay.start.next; l != lay.end; l = l.next) {
+		if(l.pos.x + l.width > lay.width)
+			lay.width = l.pos.x + l.width;
+		h := l.pos.y + l.height;
+		if(h > lay.height)
+			lay.height = h;
+	}
+}
+
+# Get flex-grow value for an item (from its Ibox cstyle, or 0)
+flexgrow(it: ref Item) : int
+{
+	pick box := it {
+	Ibox =>
+		if(box.cstyle != nil && box.cstyle.flex_grow > 0)
+			return box.cstyle.flex_grow;
+	}
+	return 0;
+}
+
+# Get flex-shrink value for an item (from its Ibox cstyle, default 100 = 1.0)
+flexshrink(it: ref Item) : int
+{
+	pick box := it {
+	Ibox =>
+		if(box.cstyle != nil && box.cstyle.flex_shrink > 0)
+			return box.cstyle.flex_shrink;
+	}
+	return 100;  # default flex-shrink: 1
+}
+
+# Get flex-basis value for an item (returns pixel value, or -1 for auto)
+# avail is the container width, used to resolve percentage basis values.
+flexbasis(it: ref Item, avail: int) : int
+{
+	pick box := it {
+	Ibox =>
+		if(box.cstyle != nil) {
+			kind := box.cstyle.flex_basis.kind();
+			if(kind == Dpixels)
+				return box.cstyle.flex_basis.spec();
+			if(kind == Dpercent && avail > 0)
+				return box.cstyle.flex_basis.spec() * avail / 100;
+		}
+	}
+	return -1;
+}
+
+# Get order value for an item (default 0)
+flexorder(it: ref Item) : int
+{
+	pick box := it {
+	Ibox =>
+		if(box.cstyle != nil && box.cstyle.order != STYLNONE)
+			return box.cstyle.order;
+	}
+	return 0;
+}
+
+# Flexbox layout: arrange items according to flex-direction, justify-content,
+# flex-wrap, flex-grow/shrink, flex-basis, and order.
+layflexitems(f: ref Frame, lay: ref Lay, items: ref Item, cs: ref ComputedStyle)
+{
+	measure(f, items);
+
+	# Clear existing lines
+	for(l := lay.start; l.next != lay.end; ) {
+		nl := l.next;
+		l.next = nl.next;
+	}
+	lay.start.next = lay.end;
+	lay.end.prev = lay.start;
+	lay.width = 0;
+	lay.height = 0;
+
+	# Collect items into array
+	nitems := 0;
+	for(it := items; it != nil; it = it.next)
+		nitems++;
+	if(nitems == 0)
+		return;
+
+	ia := array[nitems] of ref Item;
+	i := 0;
+	for(it = items; it != nil; it = it.next) {
+		ia[i] = it;
+		i++;
+	}
+
+	# Sort by order property (insertion sort — flex containers are typically small)
+	for(i = 1; i < nitems; i++) {
+		key := ia[i];
+		ko := flexorder(key);
+		j := i - 1;
+		for(; j >= 0 && flexorder(ia[j]) > ko; j--)
+			ia[j+1] = ia[j];
+		ia[j+1] = key;
+	}
+
+	gap := cs.gap;
+	avail := lay.targetwidth;
+
+	# Apply flex-basis: override natural width/height with basis if set
+	isrow := cs.flex_direction == FDrow || cs.flex_direction == FDrow_reverse;
+	for(i = 0; i < nitems; i++) {
+		basis := flexbasis(ia[i], avail);
+		if(basis >= 0) {
+			if(isrow)
+				ia[i].width = basis;
+			else
+				ia[i].height = basis;
+		}
+	}
+
+	if(isrow) {
+		# --- ROW DIRECTION with flex-wrap ---
+		# Partition items into flex lines
+		lines: list of ref FlexLine;
+		nlines := 0;
+		linestart := 0;
+		linew := 0;
+
+		for(i = 0; i < nitems; i++) {
+			w := ia[i].width;
+			neww := linew + w;
+			if(i > linestart)
+				neww += gap;
+			if(cs.flex_wrap != FWnowrap && i > linestart && neww > avail) {
+				# Start new line
+				fl := ref FlexLine(linestart, i - linestart, 0);
+				lines = fl :: lines;
+				nlines++;
+				linestart = i;
+				linew = w;
+			}
+			else
+				linew = neww;
+		}
+		# Last line
+		if(linestart < nitems) {
+			fl := ref FlexLine(linestart, nitems - linestart, 0);
+			lines = fl :: lines;
+			nlines++;
+		}
+
+		# Reverse lines list to get correct order
+		rlines := array[nlines] of ref FlexLine;
+		li := nlines - 1;
+		for(; lines != nil; lines = tl lines) {
+			rlines[li] = hd lines;
+			li--;
+		}
+
+		# Process each flex line
+		y := 0;
+		for(li = 0; li < nlines; li++) {
+			fl := rlines[li];
+
+			# Compute total width, max height, and flex-grow/shrink sums for this line
+			totalw := 0;
+			maxh := 0;
+			totalgrow := 0;
+			totalshrink := 0;
+			for(i = fl.start; i < fl.start + fl.count; i++) {
+				totalw += ia[i].width;
+				if(ia[i].height > maxh)
+					maxh = ia[i].height;
+				totalgrow += flexgrow(ia[i]);
+				totalshrink += flexshrink(ia[i]);
+			}
+			fl.maxh = maxh;
+			totalgap := gap * (fl.count - 1);
+			remaining := avail - totalw - totalgap;
+
+			# flex-grow: distribute positive remaining space
+			if(remaining > 0 && totalgrow > 0) {
+				for(i = fl.start; i < fl.start + fl.count; i++) {
+					fg := flexgrow(ia[i]);
+					if(fg > 0) {
+						extra := remaining * fg / totalgrow;
+						ia[i].width += extra;
+					}
+				}
+				remaining = 0;
+			}
+
+			# flex-shrink: shrink items when overflowing
+			if(remaining < 0 && totalshrink > 0) {
+				overflow := -remaining;
+				for(i = fl.start; i < fl.start + fl.count; i++) {
+					fs := flexshrink(ia[i]);
+					if(fs > 0) {
+						shrink := overflow * fs / totalshrink;
+						if(shrink > ia[i].width)
+							shrink = ia[i].width;
+						ia[i].width -= shrink;
+					}
+				}
+				remaining = 0;
+			}
+			if(remaining < 0)
+				remaining = 0;
+
+			# Re-layout Ibox items at adjusted widths
+			for(i = fl.start; i < fl.start + fl.count; i++) {
+				pick box := ia[i] {
+				Ibox =>
+					if(box.layid >= 0 && box.layid < len f.sublays) {
+						slay := f.sublays[box.layid];
+						slay.targetwidth = ia[i].width;
+						bcs := box.cstyle;
+						if(bcs != nil && (bcs.display == DSPflex || bcs.display == DSPinline_flex))
+							layflexitems(f, slay, box.content, bcs);
+						else if(bcs != nil && (bcs.display == DSPgrid || bcs.display == DSPinline_grid))
+							laygriditems(f, slay, box.content, bcs);
+						else
+							layalistitems(f, slay, box.content);
+						ia[i].height = slay.height;
+						ia[i].ascent = ia[i].height;
+						if(ia[i].height > maxh)
+							maxh = ia[i].height;
+					}
+				* => ;
+				}
+			}
+			fl.maxh = maxh;
+
+			# Calculate starting x based on justify-content
+			x := 0;
+			spacing := 0;
+			case int cs.justify_content {
+			int JCflex_end =>
+				x = remaining;
+			int JCcenter =>
+				x = remaining / 2;
+			int JCspace_between =>
+				if(fl.count > 1)
+					spacing = remaining / (fl.count - 1);
+			int JCspace_around =>
+				if(fl.count > 0) {
+					spacing = remaining / fl.count;
+					x = spacing / 2;
+				}
+			int JCspace_evenly =>
+				if(fl.count > 0) {
+					spacing = remaining / (fl.count + 1);
+					x = spacing;
+				}
+			}
+
+			if(cs.flex_direction == FDrow_reverse)
+				x = avail - x;
+
+			# Place items in this line
+			for(i = fl.start; i < fl.start + fl.count; i++) {
+				it = ia[i];
+				it.next = nil;
+
+				nl := Line.new();
+				nl.items = it;
+
+				# Align item vertically
+				iy := 0;
+				case int cs.align_items {
+				int AIcenter =>
+					if(it.height < maxh)
+						iy = (maxh - it.height) / 2;
+				int AIflex_end =>
+					if(it.height < maxh)
+						iy = maxh - it.height;
+				int AIstretch =>
+					it.height = maxh;
+					it.ascent = maxh;
+				}
+
+				if(cs.flex_direction == FDrow_reverse) {
+					x -= it.width;
+					nl.pos = Point(x, y + iy);
+					x -= gap + spacing;
+				}
+				else {
+					nl.pos = Point(x, y + iy);
+					x += it.width + gap + spacing;
+				}
+				nl.width = it.width;
+				nl.height = it.height;
+				nl.ascent = it.ascent;
+				nl.flags |= Lchanged;
+
+				nl.prev = lay.end.prev;
+				nl.next = lay.end;
+				lay.end.prev.next = nl;
+				lay.end.prev = nl;
+			}
+
+			y += maxh + gap;
+		}
+
+		lay.width = avail;
+		if(y > gap)
+			lay.height = y - gap;
+		else
+			lay.height = 0;
+
+		# flex-wrap-reverse: reverse y positions of lines
+		if(cs.flex_wrap == FWwrap_reverse && nlines > 1) {
+			totalh := lay.height;
+			for(l = lay.start.next; l != lay.end; l = l.next)
+				l.pos.y = totalh - l.pos.y - l.height;
+		}
+	}
+	else {
+		# --- COLUMN DIRECTION ---
+		y := 0;
+
+		for(i = 0; i < nitems; i++) {
+			it = ia[i];
+			it.next = nil;
+
+			nl := Line.new();
+			nl.items = it;
+
+			# Align item horizontally based on align-items
+			ix := 0;
+			case int cs.align_items {
+			int AIcenter =>
+				if(it.width < avail)
+					ix = (avail - it.width) / 2;
+			int AIflex_end =>
+				if(it.width < avail)
+					ix = avail - it.width;
+			int AIstretch =>
+				it.width = avail;
+			}
+
+			if(cs.flex_direction == FDcolumn_reverse)
+				nl.pos = Point(ix, 0);
+			else {
+				nl.pos = Point(ix, y);
+				y += it.height + gap;
+			}
+			nl.width = it.width;
+			nl.height = it.height;
+			nl.ascent = it.ascent;
+			nl.flags |= Lchanged;
+
+			nl.prev = lay.end.prev;
+			nl.next = lay.end;
+			lay.end.prev.next = nl;
+			lay.end.prev = nl;
+		}
+
+		lay.width = avail;
+		if(cs.flex_direction == FDcolumn_reverse) {
+			totalh := 0;
+			for(l = lay.start.next; l != lay.end; l = l.next)
+				totalh += l.height + gap;
+			if(totalh > 0)
+				totalh -= gap;
+			cy := 0;
+			for(l = lay.end.prev; l != lay.start; l = l.prev) {
+				l.pos.y = cy;
+				cy += l.height + gap;
+			}
+			lay.height = totalh;
+		}
+		else {
+			if(y > 0)
+				lay.height = y - gap;
+			else
+				lay.height = 0;
+		}
+	}
+}
+
+# Get grid placement properties for an item (from Ibox cstyle)
+# Returns (col_start, col_end, row_start, row_end) — 1-based, 0=auto
+gridplacement(it: ref Item) : (int, int, int, int)
+{
+	pick box := it {
+	Ibox =>
+		if(box.cstyle != nil)
+			return (box.cstyle.grid_column_start, box.cstyle.grid_column_end,
+				box.cstyle.grid_row_start, box.cstyle.grid_row_end);
+	}
+	return (0, 0, 0, 0);
+}
+
+# CSS Grid layout: arrange items into a grid defined by grid-template-columns/rows.
+# Supports fr units, auto, fixed (px) track sizes, and explicit item placement.
+laygriditems(f: ref Frame, lay: ref Lay, items: ref Item, cs: ref ComputedStyle)
+{
+	measure(f, items);
+
+	# Clear existing lines
+	for(l := lay.start; l.next != lay.end; ) {
+		nl := l.next;
+		l.next = nl.next;
+	}
+	lay.start.next = lay.end;
+	lay.end.prev = lay.start;
+	lay.width = 0;
+	lay.height = 0;
+
+	# Count items
+	nitems := 0;
+	for(it := items; it != nil; it = it.next)
+		nitems++;
+	if(nitems == 0)
+		return;
+
+	avail := lay.targetwidth;
+	colgap := cs.grid_gap_col;
+	rowgap := cs.grid_gap_row;
+
+	# Parse column tracks
+	ncols := 0;
+	colwidths: array of int;
+	if(cs.grid_template_columns != nil && cs.grid_template_columns != "")
+		colwidths = parsegridtracks(cs.grid_template_columns, avail, colgap, items);
+	if(colwidths == nil)
+		colwidths = array[1] of { * => avail };
+	ncols = len colwidths;
+
+	# Collect items into array
+	itemarray := array[nitems] of ref Item;
+	i := 0;
+	for(it = items; it != nil; it = it.next) {
+		itemarray[i] = it;
+		i++;
+	}
+
+	# Determine grid dimensions considering explicit placements
+	# First pass: find max explicit row/col to size the grid
+	maxrow := (nitems + ncols - 1) / ncols;
+	for(i = 0; i < nitems; i++) {
+		(cs2, ce2, rs2, re2) := gridplacement(itemarray[i]);
+		if(rs2 > 0 && rs2 > maxrow) maxrow = rs2;
+		if(re2 > 0 && re2 - 1 > maxrow) maxrow = re2 - 1;
+		# Column spanning might need more rows
+		if(cs2 > 0 && ce2 > 0 && ce2 - cs2 > 1) {
+			# spanning item takes fewer grid cells
+			;
+		}
+	}
+	nrows := maxrow;
+
+	# Build placement grid: grid_cells[row][col] = item index, -1 = empty
+	grid_cells := array[nrows] of { * => array[ncols] of { * => -1 } };
+
+	# Item placement: (row, col) for each item, and (colspan, rowspan)
+	item_row := array[nitems] of { * => -1 };
+	item_col := array[nitems] of { * => -1 };
+	item_colspan := array[nitems] of { * => 1 };
+	item_rowspan := array[nitems] of { * => 1 };
+
+	# Pass 1: Place explicitly-positioned items
+	for(i = 0; i < nitems; i++) {
+		(cs1, ce1, rs1, re1) := gridplacement(itemarray[i]);
+		if(cs1 <= 0 && rs1 <= 0)
+			continue;  # auto-placed, handle in pass 2
+
+		# Determine column (1-based to 0-based)
+		c := 0;
+		if(cs1 > 0) c = cs1 - 1;
+		if(c >= ncols) c = ncols - 1;
+
+		# Column span
+		colspan := 1;
+		if(ce1 > cs1 && cs1 > 0) {
+			colspan = ce1 - cs1;
+			if(c + colspan > ncols)
+				colspan = ncols - c;
+		}
+
+		# Determine row
+		r := 0;
+		if(rs1 > 0) r = rs1 - 1;
+		# Grow grid if needed
+		if(r >= nrows) {
+			nrows = r + 1;
+			ngrid := array[nrows] of array of int;
+			ri := 0;
+			for(ri = 0; ri < len grid_cells; ri++)
+				ngrid[ri] = grid_cells[ri];
+			for(ri = len grid_cells; ri < nrows; ri++)
+				ngrid[ri] = array[ncols] of { * => -1 };
+			grid_cells = ngrid;
+		}
+
+		# Row span
+		rowspan := 1;
+		if(re1 > rs1 && rs1 > 0) {
+			rowspan = re1 - rs1;
+			if(r + rowspan > nrows) {
+				nrows = r + rowspan;
+				ngrid := array[nrows] of array of int;
+				ri := 0;
+				for(ri = 0; ri < len grid_cells; ri++)
+					ngrid[ri] = grid_cells[ri];
+				for(ri = len grid_cells; ri < nrows; ri++)
+					ngrid[ri] = array[ncols] of { * => -1 };
+				grid_cells = ngrid;
+			}
+		}
+
+		# Mark cells as occupied
+		for(ri := r; ri < r + rowspan && ri < nrows; ri++)
+			for(ci := c; ci < c + colspan && ci < ncols; ci++)
+				grid_cells[ri][ci] = i;
+
+		item_row[i] = r;
+		item_col[i] = c;
+		item_colspan[i] = colspan;
+		item_rowspan[i] = rowspan;
+	}
+
+	# Pass 2: Auto-place remaining items
+	autorow := 0;
+	autocol := 0;
+	for(i = 0; i < nitems; i++) {
+		if(item_row[i] >= 0)
+			continue;  # already placed
+
+		# Find next empty cell
+		for(;;) {
+			if(autorow >= nrows) {
+				# Add a new row
+				nrows++;
+				ngrid := array[nrows] of array of int;
+				for(ri := 0; ri < nrows - 1; ri++)
+					ngrid[ri] = grid_cells[ri];
+				ngrid[nrows-1] = array[ncols] of { * => -1 };
+				grid_cells = ngrid;
+			}
+			if(grid_cells[autorow][autocol] == -1)
+				break;
+			autocol++;
+			if(autocol >= ncols) {
+				autocol = 0;
+				autorow++;
+			}
+		}
+
+		grid_cells[autorow][autocol] = i;
+		item_row[i] = autorow;
+		item_col[i] = autocol;
+
+		autocol++;
+		if(autocol >= ncols) {
+			autocol = 0;
+			autorow++;
+		}
+	}
+
+	# Layout each item at its column width to get actual heights
+	rowheights := array[nrows] of { * => 0 };
+	for(i = 0; i < nitems; i++) {
+		col := item_col[i];
+		row := item_row[i];
+		colspan := item_colspan[i];
+		if(col < 0 || row < 0)
+			continue;
+
+		# Compute item width (sum of spanned columns + gaps)
+		iw := 0;
+		for(ci := col; ci < col + colspan && ci < ncols; ci++) {
+			if(ci > col)
+				iw += colgap;
+			iw += colwidths[ci];
+		}
+
+		it = itemarray[i];
+		pick box := it {
+		Ibox =>
+			if(box.layid >= 0 && box.layid < len f.sublays) {
+				slay := f.sublays[box.layid];
+				slay.targetwidth = iw;
+				bcs := box.cstyle;
+				if(bcs != nil && (bcs.display == DSPflex || bcs.display == DSPinline_flex))
+					layflexitems(f, slay, box.content, bcs);
+				else if(bcs != nil && (bcs.display == DSPgrid || bcs.display == DSPinline_grid))
+					laygriditems(f, slay, box.content, bcs);
+				else
+					layalistitems(f, slay, box.content);
+				it.width = iw;
+				it.height = slay.height;
+				it.ascent = it.height;
+			}
+		* =>
+			it.width = iw;
+		}
+
+		if(it.height > rowheights[row])
+			rowheights[row] = it.height;
+	}
+
+	# Parse row tracks if specified
+	if(cs.grid_template_rows != nil && cs.grid_template_rows != "") {
+		totalh := 0;
+		r: int;
+		for(r = 0; r < nrows; r++)
+			totalh += rowheights[r];
+		totalh += rowgap * (nrows - 1);
+		specrows := parsegridtracks(cs.grid_template_rows, totalh, rowgap, nil);
+		if(specrows != nil) {
+			for(r = 0; r < len specrows && r < nrows; r++)
+				if(specrows[r] > rowheights[r])
+					rowheights[r] = specrows[r];
+		}
+	}
+
+	# Compute cumulative row y-positions
+	rowy := array[nrows] of { * => 0 };
+	y := 0;
+	row := 0;
+	for(row = 0; row < nrows; row++) {
+		rowy[row] = y;
+		y += rowheights[row] + rowgap;
+	}
+
+	# Compute cumulative column x-positions
+	colx := array[ncols] of { * => 0 };
+	x := 0;
+	col := 0;
+	for(col = 0; col < ncols; col++) {
+		colx[col] = x;
+		x += colwidths[col] + colgap;
+	}
+
+	# Position each item and create lines
+	for(i = 0; i < nitems; i++) {
+		row = item_row[i];
+		col = item_col[i];
+		if(row < 0 || col < 0)
+			continue;
+		colspan := item_colspan[i];
+		rowspan := item_rowspan[i];
+
+		it = itemarray[i];
+		it.next = nil;
+
+		# Compute spanned dimensions
+		spanw := 0;
+		for(ci := col; ci < col + colspan && ci < ncols; ci++) {
+			if(ci > col) spanw += colgap;
+			spanw += colwidths[ci];
+		}
+		spanh := 0;
+		for(ri := row; ri < row + rowspan && ri < nrows; ri++) {
+			if(ri > row) spanh += rowgap;
+			spanh += rowheights[ri];
+		}
+
+		nl := Line.new();
+		nl.items = it;
+		nl.pos = Point(colx[col], rowy[row]);
+		nl.width = spanw;
+		nl.height = spanh;
+		nl.ascent = it.ascent;
+		nl.flags |= Lchanged;
+
+		it.height = spanh;
+		it.ascent = spanh;
+		it.width = spanw;
+
+		nl.prev = lay.end.prev;
+		nl.next = lay.end;
+		lay.end.prev.next = nl;
+		lay.end.prev = nl;
+	}
+
+	lay.width = avail;
+	if(y > rowgap)
+		lay.height = y - rowgap;
+	else
+		lay.height = 0;
+}
+
+# Parse a CSS grid track list like "1fr 300px auto 2fr" and return pixel widths.
+# Handles: fixed px values, fr fractional units, auto (min-content from items), percentages.
+parsegridtracks(spec: string, available, gap: int, items: ref Item) : array of int
+{
+	# Expand repeat() functions: repeat(3, 1fr) => 1fr 1fr 1fr
+	spec = expandrepeat(spec);
+
+	# Split spec by whitespace
+	parts: list of string;
+	nparts := 0;
+	i := 0;
+	for(;;) {
+		# Skip whitespace
+		for(; i < len spec && (spec[i] == ' ' || spec[i] == '\t'); i++)
+			;
+		if(i >= len spec)
+			break;
+		# Read token (handle repeat() and minmax() by tracking parens)
+		start := i;
+		depth := 0;
+		for(; i < len spec; i++) {
+			if(spec[i] == '(')
+				depth++;
+			else if(spec[i] == ')')
+				depth--;
+			else if((spec[i] == ' ' || spec[i] == '\t') && depth == 0)
+				break;
+		}
+		parts = spec[start:i] :: parts;
+		nparts++;
+	}
+
+	# Reverse parts list into array
+	tracks := array[nparts] of string;
+	j := nparts - 1;
+	for(; parts != nil; parts = tl parts) {
+		tracks[j] = hd parts;
+		j--;
+	}
+
+	if(nparts == 0)
+		return nil;
+
+	widths := array[nparts] of { * => 0 };
+	totalfr := 0;
+	fixedtotal := 0;
+	totalgap := gap * (nparts - 1);
+
+	# First pass: resolve fixed sizes and count fr units
+	for(i = 0; i < nparts; i++) {
+		t := tracks[i];
+		if(len t > 2 && t[len t - 2:] == "fr") {
+			# fr unit: parse the number before "fr"
+			frval := parsefloatstr(t[:len t - 2]);
+			if(frval <= 0)
+				frval = 1;
+			# Store fr*100 temporarily as negative to distinguish
+			widths[i] = -(frval);
+			totalfr += frval;
+		} else if(t == "auto") {
+			# Auto: use item's natural width if available
+			w := 0;
+			if(items != nil) {
+				# Find the item in this column
+				it := items;
+				for(k := 0; k < i && it != nil; k++)
+					it = it.next;
+				if(it != nil)
+					w = it.width;
+			}
+			if(w == 0)
+				w = 50;	# minimum auto width
+			widths[i] = w;
+			fixedtotal += w;
+		} else if(len t > 1 && t[len t - 1] == '%') {
+			pct := parsefloatstr(t[:len t - 1]);
+			widths[i] = (available * pct) / 100;
+			fixedtotal += widths[i];
+		} else {
+			# Fixed size (px, em, etc.)
+			widths[i] = parsepxval(t);
+			fixedtotal += widths[i];
+		}
+	}
+
+	# Second pass: distribute remaining space among fr tracks
+	if(totalfr > 0) {
+		remaining := available - fixedtotal - totalgap;
+		if(remaining < 0)
+			remaining = 0;
+		for(i = 0; i < nparts; i++) {
+			if(widths[i] < 0) {
+				frval := -widths[i];
+				widths[i] = (remaining * frval) / totalfr;
+			}
+		}
+	}
+
+	return widths;
+}
+
+# Parse a float-like string and return integer value (for fr units and percentages)
+parsefloatstr(s: string) : int
+{
+	if(s == nil || s == "")
+		return 0;
+	neg := 0;
+	i := 0;
+	if(i < len s && s[i] == '-') {
+		neg = 1;
+		i++;
+	}
+	n := 0;
+	for(; i < len s && s[i] >= '0' && s[i] <= '9'; i++)
+		n = n * 10 + s[i] - '0';
+	# Handle decimal part
+	if(i < len s && s[i] == '.') {
+		i++;
+		# Just get first digit after decimal for rounding
+		if(i < len s && s[i] >= '0' && s[i] <= '9') {
+			if(s[i] >= '5')
+				n++;
+		}
+	}
+	if(n == 0 && neg == 0)
+		n = 1;	# minimum 1 for fr values
+	if(neg)
+		return -n;
+	return n;
+}
+
+# Parse a pixel value from a track size string
+parsepxval(s: string) : int
+{
+	if(s == nil || s == "")
+		return 0;
+	neg := 0;
+	i := 0;
+	if(i < len s && s[i] == '-') {
+		neg = 1;
+		i++;
+	}
+	n := 0;
+	for(; i < len s && s[i] >= '0' && s[i] <= '9'; i++)
+		n = n * 10 + s[i] - '0';
+	# Handle decimal
+	if(i < len s && s[i] == '.') {
+		i++;
+		if(i < len s && s[i] >= '0' && s[i] <= '9') {
+			if(s[i] >= '5')
+				n++;
+		}
+	}
+	# em/rem: approximate at 16px/em
+	if(i < len s - 1 && (s[i] == 'e' || s[i] == 'r'))
+		n = n * 16;
+	if(neg)
+		return -n;
+	return n;
+}
+
+# Expand repeat() in grid track specifications.
+# repeat(3, 1fr) => "1fr 1fr 1fr"
+# repeat(2, 100px 1fr) => "100px 1fr 100px 1fr"
+expandrepeat(spec: string) : string
+{
+	# Quick check: no repeat() means nothing to do
+	hasrepeat := 0;
+	for(k := 0; k + 6 < len spec; k++) {
+		if(spec[k:k+7] == "repeat(") {
+			hasrepeat = 1;
+			break;
+		}
+	}
+	if(hasrepeat == 0)
+		return spec;
+
+	result := "";
+	i := 0;
+	for(; i < len spec; ) {
+		# Check for "repeat("
+		if(i + 7 <= len spec && spec[i:i+7] == "repeat(") {
+			i += 7;
+			# Parse count
+			count := 0;
+			for(; i < len spec && spec[i] >= '0' && spec[i] <= '9'; i++)
+				count = count * 10 + spec[i] - '0';
+			if(count <= 0)
+				count = 1;
+			if(count > 20)
+				count = 20;	# sanity limit
+			# Skip comma and whitespace
+			for(; i < len spec && (spec[i] == ',' || spec[i] == ' ' || spec[i] == '\t'); i++)
+				;
+			# Read until closing paren
+			start := i;
+			depth := 0;
+			for(; i < len spec; i++) {
+				if(spec[i] == '(')
+					depth++;
+				else if(spec[i] == ')') {
+					if(depth == 0)
+						break;
+					depth--;
+				}
+			}
+			pattern := spec[start:i];
+			if(i < len spec)
+				i++;	# skip ')'
+			# Expand
+			for(c := 0; c < count; c++) {
+				if(len result > 0)
+					result += " ";
+				result += pattern;
+			}
+		} else {
+			result += spec[i:i+1];
+			i++;
+		}
+	}
+	return result;
 }

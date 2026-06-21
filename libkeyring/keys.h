@@ -11,7 +11,7 @@ typedef struct XRC4state XRC4state;
 
 enum
 {
-	Maxbuf=	4096,
+	Maxbuf=	49152,	/* 48KB for SLH-DSA-256s base64 signatures */
 	MaxBigBytes = 1024
 };
 
@@ -41,6 +41,30 @@ struct XAESstate
 {
 	Keyring_AESstate	x;
 	AESstate	state;
+};
+
+/* AES-GCM state */
+typedef struct XAESGCMstate XAESGCMstate;
+struct XAESGCMstate
+{
+	Keyring_AESGCMstate	x;
+	AESGCMstate	state;
+};
+
+/* ChaCha state */
+typedef struct XChaChastate XChaChastate;
+struct XChaChastate
+{
+	Keyring_ChaChastate	x;
+	ChaChastate	state;
+};
+
+/* EC point */
+typedef struct XECpoint XECpoint;
+struct XECpoint
+{
+	Keyring_ECpoint	x;
+	ECpoint	point;
 };
 
 /* DES state */

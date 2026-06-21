@@ -35,7 +35,8 @@ enum
 	DESECB=		2,
 	RC4=		3,
 	IDEACBC=	4,
-	IDEAECB=		5
+	IDEAECB=		5,
+	AESCBC=		6
 };
 
 typedef struct Dstate Dstate;
@@ -849,6 +850,36 @@ initRC4key_128(OneWay *w)
 	setupRC4state(w->state, w->secret, slen);
 }
 
+static void
+initAES128key(OneWay *w)
+{
+	free(w->state);
+	w->state = malloc(sizeof(AESstate));
+	if(w->state == nil)
+		error(Enomem);
+	if(w->slen >= 32)
+		setupAESstate(w->state, w->secret, 16, w->secret+16);
+	else if(w->slen >= 16)
+		setupAESstate(w->state, w->secret, 16, nil);
+	else
+		error("secret too short");
+}
+
+static void
+initAES256key(OneWay *w)
+{
+	free(w->state);
+	w->state = malloc(sizeof(AESstate));
+	if(w->state == nil)
+		error(Enomem);
+	if(w->slen >= 48)
+		setupAESstate(w->state, w->secret, 32, w->secret+32);
+	else if(w->slen >= 32)
+		setupAESstate(w->state, w->secret, 32, nil);
+	else
+		error("secret too short");
+}
+
 typedef struct Hashalg Hashalg;
 struct Hashalg
 {
@@ -859,10 +890,11 @@ struct Hashalg
 
 Hashalg hashtab[] =
 {
-	{ "md4", MD4dlen, md4, },
-	{ "md5", MD5dlen, md5, },
+	{ "sha256", SHA256dlen, sha256, },
 	{ "sha1", SHA1dlen, sha1, },
 	{ "sha", SHA1dlen, sha1, },
+	{ "md5", MD5dlen, md5, },
+	{ "md4", MD4dlen, md4, },
 	{ 0 }
 };
 
@@ -894,18 +926,12 @@ struct Encalg
 
 Encalg encrypttab[] =
 {
-	{ "descbc", 8, DESCBC, initDESkey, },           /* DEPRECATED -- use des_56_cbc */
-	{ "desecb", 8, DESECB, initDESkey, },           /* DEPRECATED -- use des_56_ecb */
-	{ "des_56_cbc", 8, DESCBC, initDESkey, },
-	{ "des_56_ecb", 8, DESECB, initDESkey, },
-	{ "des_40_cbc", 8, DESCBC, initDESkey_40, },
-	{ "des_40_ecb", 8, DESECB, initDESkey_40, },
-	{ "rc4", 1, RC4, initRC4key_40, },              /* DEPRECATED -- use rc4_X      */
-	{ "rc4_256", 1, RC4, initRC4key, },
-	{ "rc4_128", 1, RC4, initRC4key_128, },
-	{ "rc4_40", 1, RC4, initRC4key_40, },
+	{ "aes_256_cbc", 16, AESCBC, initAES256key, },
+	{ "aes_128_cbc", 16, AESCBC, initAES128key, },
 	{ "ideacbc", 8, IDEACBC, initIDEAkey, },
 	{ "ideaecb", 8, IDEAECB, initIDEAkey, },
+	/* Deprecated weak ciphers removed: rc4_256, rc4_128, rc4_40, rc4,
+	   des_56_cbc, des_56_ecb, des_40_cbc, des_40_ecb, descbc, desecb */
 	{ 0 }
 };
 
@@ -1180,6 +1206,9 @@ encryptb(Dstate *s, Block *b, int offset)
 	case RC4:
 		rc4(s->out.state, b->rp + offset, BLEN(b) - offset);
 		break;
+	case AESCBC:
+		aesCBCencrypt(b->rp + offset, BLEN(b) - offset, s->out.state);
+		break;
 	}
 	return b;
 }
@@ -1251,6 +1280,9 @@ decryptb(Dstate *s, Block *inb)
 			break;
 		case RC4:
 			rc4(s->in.state, b->rp, BLEN(b));
+			break;
+		case AESCBC:
+			aesCBCdecrypt(b->rp, BLEN(b), s->in.state);
 			break;
 		}
 	}
@@ -1325,9 +1357,22 @@ checkdigestb(Dstate *s, Block *inb)
 	*p = n;
 	(*s->hf)(msgid, 4, digest, &ss);
 
-	/* requires pullupblock */
-	if(memcmp(digest, inb->rp, s->diglen) != 0)
-		error("bad digest");
+	/* requires pullupblock; use constant-time compare to prevent timing oracle */
+	{
+		int diff;
+		const uchar *da;
+		const uchar *db;
+
+		if(inb == nil)
+			error("missing digest block");
+		da = digest;
+		db = inb->rp;
+		diff = 0;
+		for(n = 0; n < s->diglen; n++)
+			diff |= da[n] ^ db[n];
+		if(diff != 0)
+			error("bad digest");
+	}
 }
 
 /* get channel associated with an fd */

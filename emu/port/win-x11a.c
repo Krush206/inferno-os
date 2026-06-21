@@ -6,7 +6,7 @@
  * performance penalty (although it tries to use the X11 shared memory extension
  * to copy the result to the screen, which might reduce the latter).
  *
- *       CraigN
+ *       CraigN 
  */
 
 #define _GNU_SOURCE 1
@@ -58,6 +58,7 @@
 
 static int displaydepth;
 extern ulong displaychan;
+extern void wmtrack(int, int, int, int);
 
 enum
 {
@@ -76,9 +77,8 @@ XColor	map7[128];	/* Inferno colormap array */
 uchar	map7to8[128][2];
 
 /* for copy/paste, lifted from plan9ports via drawterm */
-static Atom clipboard;
+static Atom clipboard; 
 static Atom utf8string;
-static Atom textplainutf8;
 static Atom targets;
 static Atom text;
 static Atom compoundtext;
@@ -93,6 +93,7 @@ static int 		infernobtox11[256]; /* Values for mapping between */
 static int		triedscreen;
 static XDrawable		xdrawable;
 static void		xexpose(XEvent*);
+static void		xresize(XEvent*);
 static void		xmouse(XEvent*);
 static void		xkeyboard(XEvent*);
 static void		xsetcursor(XEvent*);
@@ -143,10 +144,10 @@ clean_errhandlers(void)
 {
 	/* remove X11 error handler(s) */
 	if(old_handler)
-		XSetErrorHandler(old_handler);
+		XSetErrorHandler(old_handler); 
 	old_handler = 0;
 	if(old_io_handler)
-		XSetErrorHandler(old_io_handler);
+		XSetErrorHandler(old_io_handler); 
 	old_io_handler = 0;
 }
 
@@ -162,14 +163,14 @@ makesharedfb(void)
 	}
 
 	/* setup to catch X11 error(s) */
-	XSync(xdisplay, 0);
-	shm_got_x_error = 0;
+	XSync(xdisplay, 0); 
+	shm_got_x_error = 0; 
 	if(old_handler != shm_ehandler)
 		old_handler = XSetErrorHandler(shm_ehandler);
 	if(old_io_handler != shm_ehandler)
 		old_io_handler = XSetErrorHandler(shm_ehandler);
 
-	img = XShmCreateImage(xdisplay, xvis, xscreendepth, ZPixmap,
+	img = XShmCreateImage(xdisplay, xvis, xscreendepth, ZPixmap, 
 			      NULL, shminfo, Xsize, Ysize);
 	XSync(xdisplay, 0);
 
@@ -180,12 +181,12 @@ makesharedfb(void)
 		clean_errhandlers();
 		return 0;
 	}
-
+	
 	if(img == nil) {
 		fprint(2, "emu: cannot allocate virtual screen buffer\n");
 		cleanexit(0);
 	}
-
+	
 	shminfo->shmid = shmget(IPC_PRIVATE, img->bytes_per_line * img->height, IPC_CREAT|0777);
 	shminfo->shmaddr = img->data = shmat(shminfo->shmid, 0, 0);
 	shminfo->readOnly = True;
@@ -221,7 +222,7 @@ makesharedfb(void)
 		cleanexit(0);
 	}
 	xscreendata = (uchar*)img->data;
-
+	
 	clean_errhandlers();
 	return 1;
 }
@@ -242,6 +243,10 @@ attachscreen(Rectangle *r, ulong *chan, int *d, int *width, int *softscreen)
 		xinitscreen(Xsize, Ysize, displaychan, chan, d);
 		/*
 		 * moved xproc from here to end since it could cause an expose event and
+	if(!triedscreen){
+		xinitscreen(Xsize, Ysize, displaychan, chan, d);
+		/*
+		 * moved xproc from here to end since it could cause an expose event and
 		 * hence a flushmemscreen before xscreendata is initialized
 		 */
 	}
@@ -257,27 +262,27 @@ attachscreen(Rectangle *r, ulong *chan, int *d, int *width, int *softscreen)
 
 	/* check for X Shared Memory Extension */
 	is_shm = XShmQueryExtension(xdisplay);
-
+	
 	if(!is_shm || !makesharedfb()){
 		is_shm = 0;
 		depth = xscreendepth;
 		if(depth == 24)
 			depth = 32;
 
-		/* allocate virtual screen */
+		/* allocate virtual screen */	
 		gscreendata = malloc(Xsize * Ysize * (displaydepth >> 3));
 		xscreendata = malloc(Xsize * Ysize * (depth >> 3));
 		if(gscreendata == nil || xscreendata == nil) {
 			fprint(2, "emu: can not allocate virtual screen buffer (%dx%dx%d[%d])\n", Xsize, Ysize, displaydepth, depth);
 			return 0;
 		}
-		img = XCreateImage(xdisplay, xvis, xscreendepth, ZPixmap, 0,
+		img = XCreateImage(xdisplay, xvis, xscreendepth, ZPixmap, 0, 
 				   (char*)xscreendata, Xsize, Ysize, 8, Xsize * (depth >> 3));
 		if(img == nil) {
 			fprint(2, "emu: can not allocate virtual screen buffer (%dx%dx%d)\n", Xsize, Ysize, depth);
 			return 0;
 		}
-
+		
 	}
 
 	if(!triedscreen){
@@ -305,35 +310,8 @@ copy32to32(Rectangle r)
 		lp = dp + width;
 		while(dp < lp){
 			v = *dp++;
-			w = v&(0xff<<24)|infernortox11[(v>>16)&0xff]<<16|infernogtox11[(v>>8)&0xff]<<8|infernobtox11[(v>>0)&0xff]<<0;
+			w = infernortox11[(v>>16)&0xff]<<16|infernogtox11[(v>>8)&0xff]<<8|infernobtox11[(v>>0)&0xff]<<0;
 			*wp++ = w;
-		}
-		dp += dx;
-		wp += dx;
-	}
-}
-
-static void
-copy16to16(Rectangle r)
-{
-	int dx, width;
-	u16int *dp, *wp, *edp, *lp;
-
-	width = Dx(r);
-	dx = Xsize - width;
-	dp = (u16int*)(gscreendata + ((r.min.y * Xsize) + r.min.x) * 2);
-	wp = (u16int*)(xscreendata + ((r.min.y * Xsize) + r.min.x) * 2);
-	edp = (u16int*)(gscreendata + ((r.max.y * Xsize) + r.max.x) * 2);
-
-	/* The pixel format should be the same as the underlying X display (see
-	   the xtruevisual function) unless a different channel format is
-	   explicitly specified on the command line, so just copy the pixel data
-	   without any processing. */
-
-	while(dp < edp) {
-		lp = dp + width;
-		while(dp < lp){
-			*wp++ = *dp++;
 		}
 		dp += dx;
 		wp += dx;
@@ -354,7 +332,7 @@ copy8to32(Rectangle r)
 	ep = gscreendata + r.max.y * Xsize + r.max.x;
 	while(p < ep) {
 		lp = p + width;
-		while(p < lp)
+		while(p < lp) 
 			*wp++ = infernotox11[*p++];
 		p += dx;
 		wp += dx;
@@ -400,7 +378,7 @@ copy8to16(Rectangle r)
 	ep = gscreendata + r.max.y * Xsize + r.max.x;
 	while(p < ep) {
 		lp = p + width;
-		while(p < lp)
+		while(p < lp) 
 			*sp++ = infernotox11[*p++];
 		p += dx;
 		sp += dx;
@@ -463,17 +441,6 @@ flushmemscreen(Rectangle r)
 	case 32:
 		copy32to32(r);
 		break;
-    case 16:
-        switch(xscreendepth){
-        case 16:
-            copy16to16(r);
-            break;
-        default:
-		    fprint(2, "emu: bad display depth %d chan %s xscreendepth %d\n", displaydepth,
-			    chantostr(chanbuf, displaychan), xscreendepth);
-		    cleanexit(0);
-        }
-        break;
 	case 8:
 		switch(xscreendepth){
 		case 24:
@@ -548,7 +515,7 @@ xkbdproc(void *arg)
 	/* BEWARE: the value of up is not defined for this proc on some systems */
 
 	XLockDisplay(xd);	/* should be ours alone */
-	XSelectInput(xd, xdrawable, KeyPressMask | KeyReleaseMask);
+	XSelectInput(xd, xdrawable, KeyPressMask | KeyReleaseMask);		
 	for(;;){
 		XNextEvent(xd, &event);
 		xkeyboard(&event);
@@ -581,12 +548,13 @@ xproc(void *arg)
 		StructureNotifyMask;
 
 	XLockDisplay(xd);	/* should be ours alone */
-	XSelectInput(xd, xdrawable, mask);
+	XSelectInput(xd, xdrawable, mask);		
 	for(;;){
 		XNextEvent(xd, &event);
 		xselect(&event, xd);
 		xmouse(&event);
 		xexpose(&event);
+		xresize(&event);
 		xdestroy(&event);
 	}
 }
@@ -624,7 +592,6 @@ xcurslock(void)
 static void
 xcursunlock(void)
 {
-	coherence();
 	icursor.inuse = 0;
 }
 
@@ -859,7 +826,7 @@ xinitscreen(int xsize, int ysize, ulong reqchan, ulong *chan, int *d)
 	XSetWindowAttributes attrs;
 	char buf[30];
 	int i;
-
+ 
 	xdrawable = 0;
 
 	dispname = getenv("DISPLAY");
@@ -922,14 +889,14 @@ xinitscreen(int xsize, int ysize, ulong reqchan, ulong *chan, int *d)
 	attrs.background_pixel = 0;
 	attrs.border_pixel = 0;
 	/* attrs.override_redirect = 1;*/ /* WM leave me alone! |CWOverrideRedirect */
-	xdrawable = XCreateWindow(xdisplay, rootwin, 0, 0, xsize, ysize, 0, xscreendepth,
+	xdrawable = XCreateWindow(xdisplay, rootwin, 0, 0, xsize, ysize, 0, xscreendepth, 
 				  InputOutput, xvis, CWBackPixel|CWBorderPixel|CWColormap, &attrs);
 
 	/*
 	 * set up property as required by ICCCM
 	 */
 	memset(&name, 0, sizeof(name));
-	name.value = (uchar*)"inferno";
+	name.value = (uchar*)"InferNode";
 	name.encoding = XA_STRING;
 	name.format = 8;
 	name.nitems = strlen((char*)name.value);
@@ -943,9 +910,9 @@ xinitscreen(int xsize, int ysize, ulong reqchan, ulong *chan, int *d)
 	hints.initial_state = NormalState;
 
 	memset(&classhints, 0, sizeof(classhints));
-	classhints.res_name = "inferno";
-	classhints.res_class = "Inferno";
-	argv[0] = "inferno";
+	classhints.res_name = "InferNode";
+	classhints.res_class = "InferNode";
+	argv[0] = "InferNode";
 	argv[1] = nil;
 	XSetWMProperties(xdisplay, xdrawable,
 		&name,			/* XA_WM_NAME property for ICCCM */
@@ -971,7 +938,6 @@ xinitscreen(int xsize, int ysize, ulong reqchan, ulong *chan, int *d)
 
 	clipboard = XInternAtom(xmcon, "CLIPBOARD", False);
 	utf8string = XInternAtom(xmcon, "UTF8_STRING", False);
-	textplainutf8 = XInternAtom(xmcon, "text/plain;charset=utf-8", False); /* for GNOME, GTK */
 	targets = XInternAtom(xmcon, "TARGETS", False);
 	text = XInternAtom(xmcon, "TEXT", False);
 	compoundtext = XInternAtom(xmcon, "COMPOUND_TEXT", False);
@@ -1077,8 +1043,8 @@ graphicsrgbmap(XColor *mapr, XColor *mapg, XColor *mapb)
 /*
  * Initialize and install the Inferno colormap as a private colormap for this
  * application.  Inferno gets the best colors here when it has the cursor focus.
- */
-static void
+ */  
+static void 
 initxcmap(XWindow w)
 {
 	XColor c;
@@ -1116,7 +1082,7 @@ if(0){int i, j; for(i=0;i<256; i+=16){print("%3d", i); for(j=i; j<i+16; j++)prin
 
 	case PseudoColor:
 		if(xtblbit == 0){
-			xcmap = XCreateColormap(xdisplay, w, xvis, AllocAll);
+			xcmap = XCreateColormap(xdisplay, w, xvis, AllocAll); 
 			XStoreColors(xdisplay, xcmap, map, 256);
 			for(i = 0; i < 256; i++)
 				infernotox11[i] = i;
@@ -1139,6 +1105,7 @@ if(0){int i, j; for(i=0;i<256; i+=16){print("%3d", i); for(j=i; j<i+16; j++)prin
 		fprint(2, "emu: win-x11 unsupported visual class %d\n", xvis->class);
 		break;
 	}
+	return;
 }
 
 static void
@@ -1163,6 +1130,20 @@ creategc(XDrawable d)
 	gcv.function = GXcopy;
 	gcv.graphics_exposures = False;
 	return XCreateGC(xdisplay, d, GCFunction|GCGraphicsExposures, &gcv);
+}
+
+static void
+xresize(XEvent *e)
+{
+	int width, height;
+	XConfigureEvent *xe;
+
+	if(e->type != ConfigureNotify)
+		return;
+	xe = (XConfigureEvent*)e;
+	width = xe->width;
+	height = xe->height;
+	wmtrack(0, width, height, 0);
 }
 
 static void
@@ -1249,10 +1230,10 @@ xkeyboard(XEvent *e)
 		case XK_KP_Space:
 			k = ' ';
 			break;
-		case XK_Home:
-		case XK_KP_Home:
-			k = Home;
-			break;
+//		case XK_Home:
+//		case XK_KP_Home:
+//			k = Khome;
+//			break;
 		case XK_Left:
 		case XK_KP_Left:
 			k = Left;
@@ -1269,22 +1250,22 @@ xkeyboard(XEvent *e)
 		case XK_KP_Right:
 			k = Right;
 			break;
-		case XK_Page_Down:
-		case XK_KP_Page_Down:
-			k = Pgdown;
-			break;
+//		case XK_Page_Down:
+//		case XK_KP_Page_Down:
+//			k = Kpgdown;
+//			break;
 		case XK_End:
 		case XK_KP_End:
 			k = End;
 			break;
-		case XK_Page_Up:
-		case XK_KP_Page_Up:
-			k = Pgup;
-			break;
-		case XK_Insert:
-		case XK_KP_Insert:
-			k = Ins;
-			break;
+//		case XK_Page_Up:	
+//		case XK_KP_Page_Up:
+//			k = Kpgup;
+//			break;
+//		case XK_Insert:
+//		case XK_KP_Insert:
+//			k = Kins;
+//			break;
 		case XK_KP_Enter:
 		case XK_Return:
 			k = '\n';
@@ -1358,7 +1339,7 @@ xmouse(XEvent *e)
 	switch(e->type){
 	case ButtonPress:
 		be = (XButtonEvent *)e;
-		/*
+		/* 
 		 * Fake message, just sent to make us announce snarf.
 		 * Apparently state and button are 16 and 8 bits on
 		 * the wire, since they are truncated by the time they
@@ -1513,7 +1494,7 @@ _xgetsnarf(XDisplay *xd)
 		data = nil;
 		goto out;
 	}
-
+		
 	/*
 	 * We should be waiting for SelectionNotify here, but it might never
 	 * come, and we have no way to time out.  Instead, we will clear
@@ -1542,7 +1523,7 @@ _xgetsnarf(XDisplay *xd)
 	}
 	/* get the property */
 	data = nil;
-	XGetWindowProperty(xd, xdrawable, prop, 0, SnarfSize/sizeof(unsigned long), 0,
+	XGetWindowProperty(xd, xdrawable, prop, 0, SnarfSize/sizeof(unsigned long), 0, 
 		AnyPropertyType, &type, &fmt, &len, &dummy, &xdata);
 	if((type != XA_STRING && type != utf8string) || len == 0){
 		if(xdata)
@@ -1608,7 +1589,7 @@ if(0) iprint("xselect target=%d requestor=%d property=%d selection=%d\n",
 
 		XChangeProperty(xd, xe->requestor, xe->property, xe->target,
 			8, PropModeReplace, (uchar*)a, sizeof a);
-	}else if(xe->target == XA_STRING || xe->target == utf8string || xe->target == textplainutf8 || xe->target == text || xe->target == compoundtext){
+	}else if(xe->target == XA_STRING || xe->target == utf8string || xe->target == text || xe->target == compoundtext){
 		/* if the target is STRING we're supposed to reply with Latin1 XXX */
 		qlock(&clip.lk);
 		XChangeProperty(xd, xe->requestor, xe->property, xe->target,

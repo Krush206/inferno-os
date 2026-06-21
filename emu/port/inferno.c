@@ -790,6 +790,7 @@ void
 Sys_pctl(void *fp)
 {
 	int fd;
+	int vmreleased;
 	Prog *p;
 	List *l;
 	Chan *c;
@@ -805,15 +806,18 @@ Sys_pctl(void *fp)
 	f = fp;
 
 	p = currun();
-	if(f->flags & BlockingPctl)
+	vmreleased = 0;
+	if(f->flags & BlockingPctl){
 		release();
+		vmreleased = 1;
+	}
 
 	np.np = nil;
 	ne.ne = nil;
 	if(waserror()) {
 		closepgrp(np.np);
 		closeegrp(ne.ne);
-		if(f->flags & BlockingPctl)
+		if(vmreleased)
 			acquire();
 		*f->ret = -1;
 		return;
@@ -852,15 +856,33 @@ Sys_pctl(void *fp)
 		closefgrp(ofg);
 	}
 
+	/*
+	 * Intentionally do NOT acquire() here for NEWNS/FORKNS.
+	 * cclone(dot) in NEWNS (and pgrpcpy in FORKNS) can issue 9P
+	 * requests to Limbo-implemented file servers (trfs serves
+	 * /n/local, mntgen serves /n, etc.). Those servers need the VM
+	 * lock to run. Holding it across cclone deadlocks the emulator:
+	 * pctl waits for the 9P reply that trfs can't produce because
+	 * we hold the VM lock. The ns rwlock in chan.c/sysfile.c covers
+	 * the data race the original "ns race fix" was after.
+	 */
+
 	if(f->flags & Sys_NEWNS) {
+		Pgrp *pg;
+
 		np.np = newpgrp();
-		dot = o->pgrp->dot;
+		pg = o->pgrp;
+		rlock(&pg->ns);
+		dot = pg->dot;
+		incref(&dot->r);
+		np.np->nodevs = pg->nodevs;
+		runlock(&pg->ns);
 		np.np->dot = cclone(dot);
 		np.np->slash = cclone(dot);
+		cclose(dot);
 		cnameclose(np.np->slash->name);
 		np.np->slash->name = newcname("/");
-		np.np->nodevs = o->pgrp->nodevs;
-		opg = o->pgrp;
+		opg = pg;
 		o->pgrp = np.np;
 		np.np = nil;
 		closepgrp(opg);
@@ -898,7 +920,7 @@ Sys_pctl(void *fp)
 
 	poperror();
 
-	if(f->flags & BlockingPctl)
+	if(vmreleased)
 		acquire();
 
 	*f->ret = p->pid;

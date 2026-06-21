@@ -3,69 +3,68 @@
 DIRS=\
 	auth\
 	auxi\
-	avr\
+	dict\
 	disk\
-	fs\
-	games\
+	git\
 	install\
 	ip\
-	lego\
 	limbo\
-	mash\
 	mk\
-	mpc\
 	ndb\
-	owen\
-	scheduler\
 	sh\
-	spki\
-	ssh\
-	usb\
-	zip\
+	wikifs\
+	fs\
+	dbm\
 
 TARG=\
+	2fa.dis\
 	9660srv.dis\
+	9cpu.dis\
 	9export.dis\
-	9srvfs.dis\
 	9win.dis\
-	B.dis\
+	acmeevent.dis\
 	ar.dis\
 	archfs.dis\
 	auplay.dis\
-	auhdr.dis\
+	awk.dis\
 	basename.dis\
+	bdf2subfont.dis\
 	bind.dis\
 	bit2gif.dis\
+	broke.dis\
 	bytes.dis\
 	cal.dis\
 	calc.dis\
+	calendar9p.dis\
 	cat.dis\
 	cd.dis\
 	cddb.dis\
+	chatsrv.dis\
 	chgrp.dis\
 	chmod.dis\
 	cleanname.dis\
 	cmp.dis\
 	comm.dis\
-	cook.dis\
-	cprof.dis\
 	cp.dis\
+	cprof.dis\
 	cpu.dis\
+	cut.dis\
 	crypt.dis\
 	date.dis\
 	dbfs.dis\
+	dcr.dis\
 	dd.dis\
 	dial.dis\
 	diff.dis\
 	disdep.dis\
 	disdump.dis\
-	dossrv.dis\
 	du.dis\
 	echo.dis\
 	ed.dis\
+	edit.dis\
 	emuinit.dis\
-	engridden.dis\
 	env.dis\
+	esort.dis\
 	export.dis\
 	fc.dis\
 	fcp.dis\
@@ -75,25 +74,40 @@ TARG=\
 	fs.dis\
 	ftest.dis\
 	ftpfs.dis\
+	ftrans.dis\
 	getauthinfo.dis\
+	getkey.dis\
+	getline.dis\
 	gettar.dis\
 	gif2bit.dis\
+	gpusrv.dis\
+	llmctl9p.dis\
+	llmsrv.dis\
+	mail9p.dis\
 	grep.dis\
 	gunzip.dis\
 	gzip.dis\
-	hd.dis\
+	history.dis\
 	idea.dis\
 	import.dis\
 	iostats.dis\
-	itest.dis\
-	itreplay.dis\
+	js.dis\
 	kill.dis\
+	ktrans.dis\
+	limbtest.dis\
 	listen.dis\
+	localcron.dis\
 	lockfs.dis\
 	logfile.dis\
 	look.dis\
 	ls.dis\
 	lstar.dis\
+	lucibridge.dis\
+	lucifer.dis\
+	luciconv.dis\
+	lucictx.dis\
+	lucipres.dis\
+	luciuisrv.dis\
 	m4.dis\
 	man2html.dis\
 	man2txt.dis\
@@ -101,21 +115,23 @@ TARG=\
 	md5sum.dis\
 	mdb.dis\
 	memfs.dis\
-	metamorph.dis\
 	mkdir.dis\
+	mkroot.dis\
 	mntgen.dis\
 	mount.dis\
-	mouse.dis\
 	mprof.dis\
 	mv.dis\
 	netkey.dis\
 	netstat.dis\
 	newer.dis\
 	ns.dis\
+	nsaudit.dis\
 	nsbuild.dis\
 	os.dis\
 	p.dis\
 	pause.dis\
+	pipefile.dis\
+	pipefs.dis\
 	plumb.dis\
 	plumber.dis\
 	prof.dis\
@@ -127,10 +143,9 @@ TARG=\
 	raw2iaf.dis\
 	rawdbfs.dis\
 	rcmd.dis\
-	rdp.dis\
 	read.dis\
-	rioimport.dis\
 	rm.dis\
+	rng.dis\
 	runas.dis\
 	sed.dis\
 	sendmail.dis\
@@ -138,50 +153,41 @@ TARG=\
 	sha1sum.dis\
 	sleep.dis\
 	sort.dis\
-	src.dis\
 	stack.dis\
 	stackv.dis\
 	stream.dis\
 	strings.dis\
 	styxchat.dis\
-	styxmon.dis\
 	styxlisten.dis\
+	styxmon.dis\
 	sum.dis\
-	tac.dis\
 	tail.dis\
 	tarfs.dis\
-	tclsh.dis\
 	tcs.dis\
 	tee.dis\
 	telnet.dis\
 	test.dis\
 	time.dis\
 	timestamp.dis\
-	tkcmd.dis\
-	tl.dis\
-	touch.dis\
-	touchcal.dis\
 	tokenize.dis\
+	touch.dis\
 	tr.dis\
 	trfs.dis\
 	tsort.dis\
-	ttffs.dis\
 	unicode.dis\
-	units.dis\
 	uniq.dis\
+	units.dis\
 	unmount.dis\
 	uudecode.dis\
 	uuencode.dis\
 	vacfs.dis\
 	vacget.dis\
 	vacput.dis\
-	vixenplumb.dis\
+	vid9p.dis\
 	wav2iaf.dis\
 	wc.dis\
+	webfs.dis\
 	webgrab.dis\
-	whoami.dis\
-	whois.dis\
-	wish.dis\
 	wmexport.dis\
 	wmimport.dis\
 	xargs.dis\
@@ -189,50 +195,81 @@ TARG=\
 	yacc.dis\
 	zeros.dis\
 
+
 MODULES=\
 
 SYSMODULES=\
+	arg.m\
 	bufio.m\
-	bundle.m\
+	convcs.m\
+	menu.m\
+	crc.m\
 	daytime.m\
+	debug.m\
+	dial.m\
+	dis.m\
 	draw.m\
+	ecmascript.m\
+	encoding.m\
 	env.m\
-	filepat.m\
+	factotum.m\
+	fdrun.m\
 	filter.m\
 	fslib.m\
-	ir.m\
+	ftrans.m\
+	gpu.m\
+	llmclient.m\
+	hash.m\
+	imagefile.m\
+	ipints.m\
+	keyboard.m\
 	keyring.m\
+	libc.m\
+	lucitheme.m\
 	man.m\
+	math.m\
+	msgio.m\
+	names.m\
 	newns.m\
-	prefab.m\
+	plumbing.m\
+	plumbmsg.m\
+	profile.m\
+	rand.m\
 	readdir.m\
 	regex.m\
+	renderer.m\
 	security.m\
 	sh.m\
-	srv.m\
+	smtp.m\
 	string.m\
 	styx.m\
 	styxlib.m\
+	styxpersist.m\
+	styxservers.m\
 	sys.m\
+	sys.m \
+	tables.m\
+	testing.m\
 	tk.m\
-	tkclient.m\
 	url.m\
-	webget.m\
+	vac.m\
+	web.m\
+	venti.m\
+	wmclient.m\
+	wmlib.m\
 	workdir.m\
 
 DISBIN=$ROOT/dis
 
 <$ROOT/mkfiles/mkdis
+
+# lucibridge.b needs agentlib.m from appl/veltro
+LIMBOFLAGS=$LIMBOFLAGS -I$ROOT/appl/veltro
 <$ROOT/mkfiles/mksubdirs
+
+# lucipres.b needs render.m from appl/xenith
+lucipres.dis: lucipres.b
+	limbo -I$ROOT/module -I$ROOT/appl/veltro -I$ROOT/appl/xenith -gw lucipres.b
 
 auhdr.dis: auplay.dis
 	rm -f auhdr.dis && cp auplay.dis auhdr.dis
-
-dbfs.dis: $MODDIR/styxservers.m
-rawdbfs.dis: $MODDIR/styxservers.m
-import.dis:	$MODDIR/encoding.m $MODDIR/factotum.m
-basename.dis: $MODDIR/names.m
-cleanname.dis: $MODDIR/names.m
-vacfs.dis:	$MODDIR/vac.m $MODDIR/venti.m
-vacget.dis:	$MODDIR/vac.m $MODDIR/venti.m
-vacput.dis:	$MODDIR/vac.m $MODDIR/venti.m

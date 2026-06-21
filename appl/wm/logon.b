@@ -1,339 +1,827 @@
 implement WmLogon;
+
 #
-# Logon program for Wm environment
+# InferNode Login Screen / Secstore Unlock
 #
+# Fullscreen login displayed at boot before the window manager starts.
+# Uses raw Draw (no wmclient/wmsrv needed) so it can run before lucifer.
+#
+# Shows brand image, password field, version info.
+# On Enter: unlocks secstore and loads keys into factotum.
+# On Escape (double-press): skip with warning (keys won't persist).
+# Exits after unlock, allowing boot to continue.
+#
+# First boot: prompts for new password + confirmation, creates secstore account.
+# Subsequent boots: prompts for password, unlocks secstore, loads keys.
+#
+# For headless: profile detects no display and falls back to console prompt.
+#
+
 include "sys.m";
 	sys: Sys;
 
 include "draw.m";
 	draw: Draw;
-	Screen, Display, Image, Context, Point, Rect: import draw;
-	ctxt: ref Context;
+	Display, Font, Screen, Image, Point, Rect, Pointer: import draw;
 
-include "tk.m";
-	tk: Tk;
+include "bufio.m";
+	bufio: Bufio;
 
-include "tkclient.m";
-	tkclient: Tkclient;
+include "imagefile.m";
 
-include "readdir.m";
+include "dial.m";
 
-include "arg.m";
-include "sh.m";
-include "newns.m";
+include "secstore.m";
+	secstore: Secstore;
+
 include "keyring.m";
-include "security.m";
+	kr: Keyring;
+	IPint: import kr;
+
+include "factotum.m";
+	factotum: Factotum;
+
+include "twofaslot.m";
+
+include "sh.m";
 
 WmLogon: module
 {
-	init:	fn(ctxt: ref Draw->Context, argv: list of string);
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-cfg := array[] of {
-	"label .p -bitmap @/icons/inferno.bit -borderwidth 2 -relief raised",
-	"frame .l -bg red",
-	"label .l.u -fg black -bg silver -text {User Name:} -anchor w",
-	"pack .l.u -fill x",
-	"frame .e",
-	"entry .e.u -bg white",
-	"pack .e.u -fill x",
-	"frame .f -borderwidth 2 -relief raised",
-	"pack .l .e -side left -in .f",
-	"pack .p .f -fill x",
-	"bind .e.u <Key-\n> {send cmd ok}",
-	"focus .e.u"
-};
+ZP := Point(0, 0);
 
-listcfg := array[] of {
-	"frame .f",
-	"listbox .f.lb -yscrollcommand {.f.sb set}",
-	"scrollbar .f.sb -orient vertical -command {.f.lb yview}",
-	"button .login -text {Login} -command {send cmd login}",
-	"pack .f.sb .f.lb -in .f -side left -fill both -expand 1",
-	"pack .f -side top -anchor center -fill y -expand 1",
-	"pack .login -side top",
-#	"pack propagate . 0",
-};
+IMGPATH:  con "/lib/lucifer/login-screen.png";
+IMGW:     con 300;
+IMGH:     con 205;
+PADDING:  con 16;
 
-init(actxt: ref Draw->Context, args: list of string)
+# Login states
+STATE_LOGIN:		con 0;
+STATE_SETUP_PASS:	con 1;
+STATE_SETUP_CONFIRM:	con 2;
+STATE_LOGIN_FAILED:	con 3;
+STATE_RECOVERY:		con 4;
+STATE_FIDOPIN:		con 5;
+
+display_g: ref Display;
+screen: ref Image;
+bodyfont: ref Font;
+smallfont: ref Font;
+logo_g: ref Image;	# cached brand image
+
+# Password state
+passbuf: string;
+confirmbuf: string;
+savedpass: string;
+savedloginpass: string;	# secstore password held while prompting for the recovery passphrase
+cursor: int;
+statusmsg: string;
+state: int;
+escpending: int;
+
+stderr: ref Sys->FD;
+
+init(ctxt: ref Draw->Context, nil: list of string)
 {
 	sys = load Sys Sys->PATH;
+	stderr = sys->fildes(2);
 	draw = load Draw Draw->PATH;
-	tk = load Tk Tk->PATH;
-	tkclient = load Tkclient Tkclient->PATH;
-	if(tkclient == nil){
-		sys->fprint(stderr(), "logon: cannot load %s: %r\n", Tkclient->PATH);
-		raise "fail:bad module";
-	}
-	sys->pctl(Sys->NEWPGRP|Sys->FORKFD, nil);
-	tkclient->init();
-	ctxt = actxt;
+	bufio = load Bufio Bufio->PATH;
+	kr = load Keyring Keyring->PATH;
+	secstore = load Secstore Secstore->PATH;
+	factotum = load Factotum Factotum->PATH;
 
-	dolist := 0;
-	usr := "";
-	nsfile := "namespace";
-	arg := load Arg Arg->PATH;
-	if(arg != nil){
-		arg->init(args);
-		arg->setusage("logon [-l] [-n namespace] [-u user]");
-		while((opt := arg->opt()) != 0){
-			case opt{
-			'u' =>
-				usr = arg->earg();
-			'l' =>
-				dolist = 1;
-			'n' =>
-				nsfile = arg->earg();
+	# Open display directly (no wmclient)
+	if(ctxt != nil && ctxt.display != nil)
+		display_g = ctxt.display;
+	if(display_g == nil) {
+		display_g = Display.allocate(nil);
+		if(display_g == nil) {
+			# No display — headless fallback
+			headlessprompt();
+			return;
+		}
+	}
+	screen = display_g.image;
+
+	bodyfont = Font.open(display_g, "/fonts/combined/unicode.sans.14.font");
+	if(bodyfont == nil)
+		bodyfont = Font.open(display_g, "*default*");
+	smallfont = Font.open(display_g, "/fonts/combined/unicode.sans.10.font");
+	if(smallfont == nil)
+		smallfont = bodyfont;
+
+	# If factotum was already started with secstore backing (e.g. headless
+	# mode with $SECSTORE_PASSWORD), skip the login screen entirely.
+	if(factotumhaskeys()) {
+		createsecstoresentinel();
+		return;
+	}
+
+	passbuf = "";
+	confirmbuf = "";
+	savedpass = "";
+	cursor = 0;
+	escpending = 0;
+
+	# Load brand image once (reloading per-redraw can fail under resource pressure)
+	logo_g = loadpng(IMGPATH);
+
+	# Brief delay for display to settle (prevents blank-screen glitch
+	# when the display is still initializing on fast startup)
+	sys->sleep(200);
+
+	if(!secstoreacctexists()) {
+		state = STATE_SETUP_PASS;
+		statusmsg = "First boot \u2014 choose a secstore password";
+	} else {
+		state = STATE_LOGIN;
+		statusmsg = "Enter password to unlock";
+	}
+
+	redraw();
+
+	# Read keyboard input directly from /dev/keyboard
+	kbdfd := sys->open("/dev/keyboard", Sys->OREAD);
+	if(kbdfd == nil) {
+		sys->fprint(stderr, "logon: cannot open /dev/keyboard: %r\n");
+		headlessprompt();
+		return;
+	}
+
+	kbdbuf := array[12] of byte;
+	for(;;) {
+		n := sys->read(kbdfd, kbdbuf, len kbdbuf);
+		if(n <= 0)
+			break;
+
+		s := string kbdbuf[0:n];
+		for(j := 0; j < len s; j++) {
+			k := s[j];
+			case k {
+			'\n' or '\r' =>
+				escpending = 0;
+				if(handleenter())
+					return;
+			27 =>	# Escape
+				if(handleescape())
+					return;
+			'\b' =>
+				escpending = 0;
+				handlebackspace();
 			* =>
-				arg->usage();
+				if(k >= 16r20) {
+					escpending = 0;
+					handlechar(k);
+				}
 			}
 		}
-		args = arg->argv();
-		arg = nil;
-	} else
-		args = nil;
-	if(ctxt == nil)
-		sys->fprint(stderr(), "logon: must run under a window manager\n");
-
-	(ctlwin, nil) := tkclient->toplevel(ctxt, nil, nil, Tkclient->Plain);
-	if(sys->fprint(ctlwin.ctxt.connfd, "request") == -1){
-		sys->fprint(stderr(), "logon: must be run as principal wm application\n");
-		raise "fail:lack of control";
 	}
+}
 
-	if(dolist)
-		usr = chooseuser(ctxt);
-
-	if (usr == nil || !logon(usr)) {
-		(panel, cmd) := makepanel(ctxt, cfg);
-		stop := chan of int;
-		spawn tkclient->handler(panel, stop);
-		for(;;) {
-			tk->cmd(panel, "focus .e.u; update");
-			<-cmd;
-			usr = tk->cmd(panel, ".e.u get");
-			if(usr == "") {
-				notice("You must supply a user name to login");
-				continue;
-			}
-			if(logon(usr)) {
-				panel = nil;
-				stop <-= 1;
-				break;
-			}
-			tk->cmd(panel, ".e.u delete 0 end");
+# Returns 1 if login screen should exit
+handleenter(): int
+{
+	case state {
+	STATE_SETUP_PASS =>
+		if(passbuf == nil || passbuf == "") {
+			statusmsg = "Password required";
+			redraw();
+			return 0;
 		}
-	}
-	ok: int;
-	if(nsfile != nil){
-		(ok, nil) = sys->stat(nsfile);
-		if(ok < 0){
-			nsfile = nil;
-			(ok, nil) = sys->stat("namespace");
+		savedpass = passbuf;
+		passbuf = "";
+		state = STATE_SETUP_CONFIRM;
+		statusmsg = "Confirm your password";
+		redraw();
+		return 0;
+
+	STATE_SETUP_CONFIRM =>
+		if(passbuf != savedpass) {
+			statusmsg = "Passwords don't match \u2014 try again";
+			passbuf = "";
+			savedpass = "";
+			state = STATE_SETUP_PASS;
+			redraw();
+			return 0;
 		}
-	}else
-		(ok, nil) = sys->stat("namespace");
-	if(ok >= 0) {
-		ns := load Newns Newns->PATH;
-		if(ns == nil)
-			notice("failed to load namespace builder");
-		else if ((nserr := ns->newns(nil, nsfile)) != nil)
-			notice("namespace error:\n"+nserr);
-	}
-	tkclient->wmctl(ctlwin, "endcontrol");
-	errch := chan of string;
-	spawn exec(ctxt, args, errch);
-	err := <-errch;
-	if (err != nil) {
-		sys->fprint(stderr(), "logon: %s\n", err);
-		raise "fail:exec failed";
-	}
-}
+		# Passwords match — create account and unlock
+		dosetupandunlock(passbuf);
+		passbuf = "";
+		savedpass = "";
+		return 1;
 
-makepanel(ctxt: ref Draw->Context, cmds: array of string): (ref Tk->Toplevel, chan of string)
-{
-	(t, nil) := tkclient->toplevel(ctxt, "-bg silver", nil, Tkclient->Plain);
-
-	cmd := chan of string;
-	tk->namechan(t, cmd, "cmd");
-
-	for(i := 0; i < len cmds; i++)
-		tk->cmd(t, cmds[i]);
-	err := tk->cmd(t, "variable lasterr");
-	if(err != nil) {
-		sys->fprint(stderr(), "logon: tk error: %s\n", err);
-		raise "fail:config error";
-	}
-	tk->cmd(t, "update");
-	centre(t);
-	tkclient->startinput(t, "kbd" :: "ptr" :: nil);
-	tkclient->onscreen(t, "onscreen");
-	return (t, cmd);
-}
-
-exec(ctxt: ref Draw->Context, argv: list of string, errch: chan of string)
-{
-	sys->pctl(sys->NEWFD, 0 :: 1 :: 2 :: nil);
-	{
-		argv = "/dis/wm/toolbar.dis" :: nil;
-		cmd := load Command hd argv;
-		if (cmd == nil) {
-			errch <-= sys->sprint("cannot load %s: %r", hd argv);
-		} else {
-			errch <-= nil;
-			spawn cmd->init(ctxt, argv);
+	STATE_LOGIN =>
+		r := dounlock();
+		if(r == 1)
+			return 1;
+		if(r == 2){	# moved to the recovery-passphrase prompt
+			redraw();
+			return 0;
 		}
-	}exception{
-	"fail:*" =>
-		exit;
-	}
-}
-
-logon(user: string): int
-{
-	userdir := "/usr/"+user;
-	if(sys->chdir(userdir) < 0) {
-		notice("There is no home directory for \""+
-			user+"\"\nmounted on this machine");
+		# Unlock failed — let user retry or skip
+		state = STATE_LOGIN_FAILED;
+		statusmsg += "\nEnter: try again  |  Escape: continue without secstore";
+		redraw();
 		return 0;
-	}
 
-	chmod("/chan", Sys->DMDIR|8r777);
-	chmod("/chan/wmrect", 8r666);
-	chmod("/chan/wmctl", 8r666);
-
-	#
-	# Set the user id
-	#
-	fd := sys->open("/dev/user", sys->OWRITE);
-	if(fd == nil) {
-		notice(sys->sprint("failed to open /dev/user: %r"));
+	STATE_LOGIN_FAILED =>
+		# Enter from failed state — go back to password entry
+		passbuf = "";
+		state = STATE_LOGIN;
+		statusmsg = "Enter password to unlock";
+		redraw();
 		return 0;
-	}
-	b := array of byte user;
-	if(sys->write(fd, b, len b) < 0) {
-		notice("failed to write /dev/user\nwith error "+sys->sprint("%r"));
+
+	STATE_RECOVERY =>
+		if(passbuf == nil || passbuf == "") {
+			statusmsg = "Recovery passphrase required";
+			redraw();
+			return 0;
+		}
+		statusmsg = "Unlocking with recovery passphrase...";
+		redraw();
+		rerr := connectfactotum(savedloginpass, passbuf, "");
+		passbuf = "";
+		if(rerr == nil) {
+			enablesecstoresave(savedloginpass);
+			createsecstoresentinel();
+			savedloginpass = "";
+			statusmsg = "Unlocked";
+			redraw();
+			ensurellmsrv();
+			sys->sleep(500);
+			return 1;
+		}
+		savedloginpass = "";
+		state = STATE_LOGIN_FAILED;
+		statusmsg = "Recovery failed\nEnter: try again  |  Escape: continue without secstore";
+		redraw();
 		return 0;
-	}
 
-	return 1;
-}
-
-chmod(file: string, mode: int): int
-{
-	d := sys->nulldir;
-	d.mode = mode;
-	if(sys->wstat(file, d) < 0){
-		notice(sys->sprint("failed to chmod %s: %r", file));
-		return -1;
+	STATE_FIDOPIN =>
+		fidopin := passbuf;		# blank allowed (touch-only keys)
+		passbuf = "";
+		statusmsg = "Unlocking with your security key (touch it)...";
+		redraw();
+		ferr := connectfactotum(savedloginpass, "", fidopin);
+		if(ferr == nil) {
+			enablesecstoresave(savedloginpass);
+			createsecstoresentinel();
+			savedloginpass = "";
+			statusmsg = "Unlocked";
+			redraw();
+			ensurellmsrv();
+			sys->sleep(500);
+			return 1;
+		}
+		if(ferr == "NEEDRECOVERY") {
+			state = STATE_RECOVERY;
+			statusmsg = "Security key didn't unlock — enter recovery passphrase";
+			redraw();
+			return 0;
+		}
+		savedloginpass = "";
+		state = STATE_LOGIN_FAILED;
+		statusmsg = "Unlock failed: " + ferr + "\nEnter: try again  |  Escape: continue without secstore";
+		redraw();
+		return 0;
 	}
 	return 0;
 }
 
-chooseuser(ctxt: ref Draw->Context): string
+# Returns 1 if login screen should exit
+handleescape(): int
 {
-	(t, cmd) := makepanel(ctxt, listcfg);
-	usrlist := getusers();
-	if(usrlist == nil)
-		usrlist = "inferno" :: nil;
-	for(; usrlist != nil; usrlist = tl usrlist)
-		tkcmd(t, ".f.lb insert end '" + hd usrlist);
-	tkcmd(t, "update");
-	stop := chan of int;
-	spawn tkclient->handler(t, stop);
-	u := "";
-	for(;;){
-		<-cmd;
-		sel := tkcmd(t, ".f.lb curselection");
-		if(sel == nil)
-			continue;
-		u = tkcmd(t, ".f.lb get " + sel);
-		if(u != nil)
-			break;
+	case state {
+	STATE_SETUP_CONFIRM =>
+		# Go back to password entry
+		passbuf = "";
+		savedpass = "";
+		state = STATE_SETUP_PASS;
+		statusmsg = "Choose a secstore password";
+		redraw();
+		return 0;
+
+	STATE_LOGIN_FAILED =>
+		# User chose to continue without secstore after failed unlock
+		statusmsg = "Continuing without secstore";
+		redraw();
+		sys->sleep(500);
+		return 1;
+
+	* =>
+		# Double-press escape to skip
+		if(escpending) {
+			statusmsg = "Skipped";
+			redraw();
+			sys->sleep(300);
+			return 1;
+		}
+		escpending = 1;
+		statusmsg = "Keys won't persist. Press Escape again to skip.";
+		redraw();
+		return 0;
 	}
-	stop <-= 1;
-	return u;
 }
 
-getusers(): list of string
+handlebackspace()
 {
-	readdir := load Readdir Readdir->PATH;
-	if(readdir == nil)
+	if(len passbuf > 0) {
+		passbuf = passbuf[0:len passbuf - 1];
+		redraw();
+	}
+}
+
+handlechar(k: int)
+{
+	passbuf[len passbuf] = k;
+	redraw();
+}
+
+redraw()
+{
+	if(screen == nil)
+		return;
+
+	r := screen.r;
+	cx := (r.min.x + r.max.x) / 2;
+	cy := (r.min.y + r.max.y) / 2;
+
+	# Black background
+	black := display_g.rgb(16r1a, 16r1a, 16r1a);
+	screen.draw(r, black, nil, ZP);
+
+	# Field dimensions (declared early so we can size the centered group)
+	fh := bodyfont.height + 12;
+	fw := 300;
+
+	# Total height of the logo + prompt + field + status group. The
+	# status line below the field is part of the visible group, so
+	# include it when present — otherwise the group's visual centroid
+	# sits below cy and the grouping reads as too low.
+	grouph := 0;
+	if(logo_g != nil)
+		grouph += logo_g.r.dy() + PADDING * 2;
+	else
+		grouph += PADDING * 4;
+	grouph += bodyfont.height + 4;	# prompt + spacing
+	grouph += fh;			# password field
+	if(state != STATE_LOGIN_FAILED && statusmsg != nil && statusmsg != "")
+		grouph += PADDING + bodyfont.height;	# gap + status line
+
+	# Small upward optical bias: the bottom-anchored version/copyright
+	# adds visual weight near r.max.y, so pure geometric centre reads
+	# as low. Nudging up by ~1/24 of the viewport balances it.
+	y := cy - grouph / 2 - r.dy() / 24;
+	if(y < r.min.y + PADDING)
+		y = r.min.y + PADDING;
+
+	# Draw cached brand image (centered)
+	if(logo_g != nil) {
+		lw := logo_g.r.dx();
+		lh := logo_g.r.dy();
+		lx := cx - lw / 2;
+		screen.draw(Rect((lx, y), (lx + lw, y + lh)), logo_g, nil, logo_g.r.min);
+		y += lh + PADDING * 2;
+	} else
+		y += PADDING * 4;
+
+	# Password field (manual draw — centered on screen)
+	orange := display_g.rgb(16rff, 16r55, 16r00);
+	dimgrey := display_g.rgb(16r66, 16r66, 16r66);
+	fieldbg := display_g.rgb(16r2a, 16r2a, 16r2a);
+	white := display_g.rgb(16rff, 16rff, 16rff);
+
+	if(state == STATE_LOGIN_FAILED) {
+		# Failed state: show error and choices, no password field
+		red := display_g.rgb(16rff, 16r44, 16r44);
+
+		# Error message
+		errline := statusmsg;
+		# Split on \n — first line is the error, second is the choices
+		nl := -1;
+		for(si := 0; si < len errline; si++)
+			if(errline[si] == '\n') { nl = si; break; }
+		if(nl >= 0) {
+			ew := bodyfont.width(errline[0:nl]);
+			screen.text(Point(cx - ew / 2, y), red, ZP, bodyfont, errline[0:nl]);
+			y += bodyfont.height + PADDING;
+			choiceline := errline[nl+1:];
+			cw2 := bodyfont.width(choiceline);
+			screen.text(Point(cx - cw2 / 2, y), white, ZP, bodyfont, choiceline);
+			y += bodyfont.height + PADDING;
+		} else {
+			ew := bodyfont.width(errline);
+			screen.text(Point(cx - ew / 2, y), red, ZP, bodyfont, errline);
+			y += bodyfont.height + PADDING;
+		}
+
+		# Warning about consequences
+		warn := "Keys and secrets will not be available.";
+		ww := smallfont.width(warn);
+		screen.text(Point(cx - ww / 2, y), dimgrey, ZP, smallfont, warn);
+		y += smallfont.height;
+		warn2 := "AI integration may not work.";
+		ww2 := smallfont.width(warn2);
+		screen.text(Point(cx - ww2 / 2, y), dimgrey, ZP, smallfont, warn2);
+	} else {
+		# Normal states: show prompt + password field
+		prompt := "Password:";
+		case state {
+		STATE_SETUP_PASS =>
+			prompt = "New password:";
+		STATE_SETUP_CONFIRM =>
+			prompt = "Confirm password:";
+		STATE_RECOVERY =>
+			prompt = "Recovery passphrase:";
+		STATE_FIDOPIN =>
+			prompt = "Security key PIN:";
+		}
+		pw := bodyfont.width(prompt);
+		screen.text(Point(cx - pw / 2, y), dimgrey, ZP, bodyfont, prompt);
+		y += bodyfont.height + 4;
+
+		# Field background (centered)
+		fx := cx - fw / 2;
+		fieldr := Rect((fx, y), (fx + fw, y + fh));
+		screen.draw(fieldr, fieldbg, nil, ZP);
+		screen.border(fieldr, 1, orange, ZP);
+
+		# Masked password (dots)
+		dots := "";
+		for(i := 0; i < len passbuf; i++)
+			dots += "\u2022";
+		screen.text(Point(fx + 6, y + 6), white, ZP, bodyfont, dots);
+
+		y += fh + PADDING;
+
+		# Status message (centered)
+		if(statusmsg != nil && statusmsg != "") {
+			sw := bodyfont.width(statusmsg);
+			screen.text(Point(cx - sw / 2, y), dimgrey, ZP, bodyfont, statusmsg);
+		}
+	}
+
+	# Build info at bottom (dim, small)
+	by := r.max.y - smallfont.height * 2 - PADDING;
+
+	version := rf("/dev/sysctl");
+	if(version == nil)
+		version = "InferNode";
+	vw := smallfont.width(version);
+	screen.text(Point(cx - vw / 2, by), dimgrey, ZP, smallfont, version);
+	by += smallfont.height + 2;
+
+	ctext := "\u00A9 2026 InferNode.io";
+	cw := smallfont.width(ctext);
+	screen.text(Point(cx - cw / 2, by), dimgrey, ZP, smallfont, ctext);
+
+	screen.flush(Draw->Flushnow);
+}
+
+# First boot: create secstore account, then unlock
+dosetupandunlock(pass: string)
+{
+	statusmsg = "Creating secstore account...";
+	redraw();
+	err := createsecstoreacct(pass);
+	if(err != nil) {
+		statusmsg = "Setup failed: " + err;
+		redraw();
+		sys->sleep(2000);
+		return;
+	}
+
+	statusmsg = "Unlocking (this may take a moment)...";
+	redraw();
+
+	err = connectfactotum(pass, "", "");
+	if(err == nil) {
+		enablesecstoresave(pass);
+		createsecstoresentinel();
+	}
+
+	pass = "";
+
+	if(err != nil) {
+		statusmsg = err;
+		redraw();
+		sys->sleep(2000);
+		return;
+	}
+
+	statusmsg = "Unlocked";
+	redraw();
+	ensurellmsrv();
+	sys->sleep(500);
+}
+
+# Normal boot: unlock secstore and load keys.
+# Returns 1 on success, 0 on failure.
+# 1 if this account has 2FA key-slots (checked locally, before secstore).
+accountis2fa(): int
+{
+	ts := load Twofaslot Twofaslot->PATH;
+	if(ts == nil)
+		return 0;
+	ts->init();
+	u := rf("/dev/user");
+	if(u == nil)
+		u = "inferno";
+	return ts->is2fa(u);
+}
+
+dounlock(): int
+{
+	if(passbuf == nil || passbuf == "") {
+		statusmsg = "Password required";
+		redraw();
+		return 0;
+	}
+
+	# 2FA accounts: collect the security-key PIN (UV / AAL3) before unlocking.
+	# Blank PIN is fine for touch-only keys; legacy accounts unlock directly.
+	if(accountis2fa()){
+		savedloginpass = passbuf;
+		passbuf = "";
+		state = STATE_FIDOPIN;
+		statusmsg = "Enter your security key PIN (blank if none)";
+		return 2;
+	}
+
+	statusmsg = "Unlocking (this may take a moment)...";
+	redraw();
+
+	err := connectfactotum(passbuf, "", "");
+
+	# Establish secstore save-back path so future keys persist
+	if(err == nil) {
+		enablesecstoresave(passbuf);
+		createsecstoresentinel();
+	}
+
+	passbuf = "";	# zero password
+
+	if(err != nil) {
+		statusmsg = err;
+		redraw();
+		return 0;
+	}
+
+	statusmsg = "Unlocked";
+	redraw();
+	ensurellmsrv();
+	sys->sleep(500);
+	return 1;
+}
+
+# Create sentinel so other apps can detect secstore is active
+createsecstoresentinel()
+{
+	fd := sys->create("/tmp/.secstore-unlocked", Sys->OWRITE, 8r644);
+	if(fd != nil)
+		sys->fprint(fd, "1");
+}
+
+# Start llmsrv if not already running.
+# llmsrv may have failed during profile because the API key
+# was only in secstore (not yet loaded at profile time).
+ensurellmsrv()
+{
+	(ok, nil) := sys->stat("/mnt/llm");
+	if(ok >= 0)
+		return;	# already running
+
+	sys->fprint(stderr, "logon: /mnt/llm not mounted, starting llmsrv\n");
+	spawn startllmsrv();
+	sys->sleep(1000);	# give it time to mount
+}
+
+startllmsrv()
+{
+	mod := load Command "/dis/llmsrv.dis";
+	if(mod == nil) {
+		sys->fprint(stderr, "logon: cannot load llmsrv: %r\n");
+		return;
+	}
+	mod->init(nil, "llmsrv" :: nil);
+}
+
+connectfactotum(pass, recoverypass, fidopin: string): string
+{
+	if(secstore == nil)
+		return "secstore module not loaded";
+	secstore->init();
+	if(factotum == nil)
+		return "factotum module not loaded";
+	factotum->init();
+
+	user := rf("/dev/user");
+	if(user == nil)
+		user = "inferno";
+
+	pwhash := secstore->mkseckey(pass);
+	pwhash2 := secstore->mkseckey2(pass);
+	rootkey := secstore->mkfilekey3(user, pass);
+	filekey := secstore->mkfilekey2(pass);
+	legacykey := secstore->mkfilekey(pass);
+
+	(conn, nil, diag) := secstore->connect2("tcp!localhost!5356", user, pwhash, pwhash2);
+	if(conn == nil) {
+		if(diag != nil)
+			return "secstore: " + diag;
+		return sys->sprint("secstore: %r");
+	}
+
+	file := secstore->getfile(conn, "factotum", 0);
+	secstore->bye(conn);
+
+	if(file == nil) {
+		sys->fprint(stderr, "logon: secstore has no factotum file for %s (new account or read failure)\n", user);
 		return nil;
-	(dirs, nil) := readdir->init("/usr", Readdir->NAME);
-	n: list of string;
-	for (i := len dirs -1; i >=0; i--)
-		if (dirs[i].qid.qtype & Sys->QTDIR)
-			n = dirs[i].name :: n;
-	return n;
-}
-
-notecmd := array[] of {
-	"frame .f",
-	"label .f.l -bitmap error -foreground red",
-	"button .b -text Continue -command {send cmd done}",
-	"focus .f",
-	"bind .f <Key-\n> {send cmd done}",
-	"pack .f.l .f.m -side left -expand 1",
-	"pack .f .b",
-	"pack propagate . 0",
-};
-
-centre(t: ref Tk->Toplevel)
-{
-	org: Point;
-	ir := tk->rect(t, ".", Tk->Border|Tk->Required);
-	org.x = t.screenr.dx() / 2 - ir.dx() / 2;
-	org.y = t.screenr.dy() / 3 - ir.dy() / 2;
-#sys->print("ir: %d %d %d %d\n", ir.min.x, ir.min.y, ir.max.x, ir.max.y);
-	if (org.y < 0)
-		org.y = 0;
-	tk->cmd(t, ". configure -x " + string org.x + " -y " + string org.y);
-}
-
-notice(message: string)
-{
-	(t, nil) := tkclient->toplevel(ctxt, "-borderwidth 2 -relief raised", nil, Tkclient->Plain);
-	cmd := chan of string;
-	tk->namechan(t, cmd, "cmd");
-	tk->cmd(t, "label .f.m -anchor nw -text '"+message);
-	for(i := 0; i < len notecmd; i++)
-		tk->cmd(t, notecmd[i]);
-	centre(t);
-	tkclient->onscreen(t, "onscreen");
-	tkclient->startinput(t, "kbd"::"ptr"::nil);
-	stop := chan of int;
-	spawn tkclient->handler(t, stop);
-	tk->cmd(t, "update; cursor -default");
-	<-cmd;
-	stop <-= 1;
-}
-
-tkcmd(t: ref Tk->Toplevel, cmd: string): string
-{
-	s := tk->cmd(t, cmd);
-	if (s != nil && s[0] == '!') {
-		sys->print("%s\n", cmd);
-		sys->print("tk error: %s\n", s);
 	}
-	return s;
+
+	# 2FA accounts encrypt the factotum blob under a data key wrapped in
+	# YubiKey/recovery key-slots; legacy password-only accounts have no slots
+	# and take the unchanged path below. Strictly additive — no slots, no change.
+	plaintext: array of byte;
+	twofaslot := load Twofaslot Twofaslot->PATH;
+	is2fa := 0;
+	if(twofaslot != nil){
+		twofaslot->init();
+		is2fa = twofaslot->is2fa(user);
+	}
+	if(is2fa){
+		# Try the present YubiKey (touch); if recoverypass is given, unlock()
+		# also tries the recovery slot.
+		(dk, nil) := twofaslot->unlock(user, rootkey, recoverypass, fidopin);	# touch + (FIDO PIN if UV)
+		if(dk != nil)
+			plaintext = secstore->decrypt3(file, dk, nil, nil);
+		# Fall back to the password path if the blob is still password-encrypted
+		# — a legacy/un-migrated blob during an incomplete enroll/disable. A
+		# fully migrated 2FA blob will NOT decrypt under the password, so strong
+		# mode is preserved when the key is simply absent.
+		if(plaintext == nil)
+			plaintext = secstore->decrypt3(file, rootkey, filekey, legacykey);
+		if(plaintext == nil){
+			if(recoverypass == "")
+				return "NEEDRECOVERY";	# signal logon to prompt for the recovery passphrase
+			return "recovery passphrase did not unlock";
+		}
+	}else{
+		plaintext = secstore->decrypt3(file, rootkey, filekey, legacykey);
+		if(plaintext == nil)
+			return "wrong password";
+	}
+
+	# Parse key lines and add to running factotum
+	lines := string plaintext;
+	secstore->erasekey(plaintext);
+
+	fd := sys->open("/mnt/factotum/ctl", Sys->OWRITE);
+	if(fd == nil)
+		return sys->sprint("cannot open factotum: %r");
+
+	nloaded := 0;
+	line := "";
+	for(i := 0; i < len lines; i++) {
+		if(lines[i] == '\n') {
+			if(len line > 4 && line[0:4] == "key ") {
+				b := array of byte line;
+				sys->write(fd, b, len b);
+				nloaded++;
+			}
+			line = "";
+		} else
+			line[len line] = lines[i];
+	}
+	if(len line > 4 && line[0:4] == "key ") {
+		b := array of byte line;
+		sys->write(fd, b, len b);
+		nloaded++;
+	}
+
+	sys->fprint(stderr, "logon: loaded %d keys from secstore\n", nloaded);
+	return nil;
 }
 
-stderr(): ref Sys->FD
+createsecstoreacct(pass: string): string
 {
-	return sys->fildes(2);
+	if(secstore == nil)
+		return "secstore module not loaded";
+	secstore->init();
+
+	user := rf("/dev/user");
+	if(user == nil)
+		user = "inferno";
+
+	storedir := "/usr/inferno/secstore";
+	userdir := storedir + "/" + user;
+
+	sys->create(storedir, Sys->OREAD, Sys->DMDIR | 8r700);
+	fd := sys->create(userdir, Sys->OREAD, Sys->DMDIR | 8r700);
+	if(fd == nil)
+		return sys->sprint("can't create %s: %r", userdir);
+	fd = nil;
+
+	pwhash2 := secstore->mkseckey2(pass);
+	hexHi := secstore->mkverifier(user, "secstore3", pwhash2);
+
+	pakpath := userdir + "/PAK";
+	fd = sys->create(pakpath, Sys->OWRITE, 8r600);
+	if(fd == nil)
+		return sys->sprint("can't create %s: %r", pakpath);
+	b := array of byte secstore->formatverifier("secstore3", hexHi);
+	sys->write(fd, b, len b);
+	fd = nil;
+
+	sys->fprint(stderr, "logon: secstore account created for %s\n", user);
+	return nil;
 }
 
-rf(path: string) : string
+#
+# Tell running factotum to use secstore for persistence.
+# This enables the save-back path so new keys are persisted.
+#
+enablesecstoresave(pass: string)
 {
-	fd := sys->open(path, sys->OREAD);
+	user := rf("/dev/user");
+	if(user == nil)
+		user = "inferno";
+
+	cmd := "secstore tcp!localhost!5356 " + user + " " + pass;
+	fd := sys->open("/mnt/factotum/ctl", Sys->OWRITE);
+	if(fd == nil)
+		return;
+	b := array of byte cmd;
+	sys->write(fd, b, len b);
+	sys->fprint(stderr, "logon: secstore save-back enabled\n");
+}
+
+# Check if factotum already has keys (e.g. loaded via -S -P in profile)
+factotumhaskeys(): int
+{
+	fd := sys->open("/mnt/factotum/ctl", Sys->OREAD);
+	if(fd == nil)
+		return 0;
+	buf := array[64] of byte;
+	n := sys->read(fd, buf, len buf);
+	return n > 0;
+}
+
+secstoreacctexists(): int
+{
+	user := rf("/dev/user");
+	if(user == nil)
+		user = "inferno";
+	(ok, nil) := sys->stat("/usr/inferno/secstore/" + user + "/PAK");
+	return ok >= 0;
+}
+
+headlessprompt()
+{
+	# Fallback for headless: use factotum's built-in console prompt
+	sys->fprint(stderr, "logon: no display, using console\n");
+	# Nothing to do — factotum -S will prompt on its own if needed,
+	# or the user can manually run:
+	#   auth/factotum -S tcp!localhost!5356
+}
+
+loadpng(path: string): ref Image
+{
+	if(bufio == nil || display_g == nil)
+		return nil;
+	readpng := load RImagefile RImagefile->READPNGPATH;
+	remap := load Imageremap Imageremap->PATH;
+	if(readpng == nil || remap == nil)
+		return nil;
+	readpng->init(bufio);
+	remap->init(display_g);
+	fd := bufio->open(path, Bufio->OREAD);
 	if(fd == nil)
 		return nil;
+	(raw, nil) := readpng->read(fd);
+	if(raw == nil)
+		return nil;
+	(img, nil) := remap->remap(raw, display_g, 0);
+	return img;
+}
 
-	buf := array[512] of byte;
+rf(name: string): string
+{
+	fd := sys->open(name, Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	buf := array[128] of byte;
 	n := sys->read(fd, buf, len buf);
 	if(n <= 0)
 		return nil;
-
+	while(n > 0 && (buf[n-1] == byte '\n' || buf[n-1] == byte ' '))
+		n--;
+	if(n == 0)
+		return nil;
 	return string buf[0:n];
 }

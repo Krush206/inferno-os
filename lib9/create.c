@@ -20,15 +20,18 @@ create(char *f, int mode, int perm)
 		m = O_RDWR;
 		break;
 	}
+#ifdef _WIN32
+	m |= O_CREAT|O_TRUNC|O_BINARY;
+#else
 	m |= O_CREAT|O_TRUNC;
+#endif
 
 	if(perm & DMDIR){
-		#ifndef _WIN32_WINNT
+#ifdef _WIN32
+		if(_mkdir(f) < 0)
+#else
 		if(mkdir(f, perm&0777) < 0)
-		#endif
-		#ifdef _WIN32_WINNT
-		if(mkdir(f) < 0)
-		#endif
+#endif
 			return -1;
 		perm &= ~DMDIR;
 		m &= 3;

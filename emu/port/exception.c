@@ -7,6 +7,13 @@
 #include "kernel.h"
 #include "raise.h"
 
+/* See xec.c — x86/AMD64 JIT produces non-aligned code addresses */
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+#define PC_MISALIGNED(pc)	0
+#else
+#define PC_MISALIGNED(pc)	((ulong)(pc) & 3)
+#endif
+
 static int
 ematch(char *pat, char *exp)
 {
@@ -62,7 +69,7 @@ newestring(char *estr)
 	return s;
 }
 
-#define NOPC	0xffffffff
+#define NOPC	((ulong)-1)
 
 #define FRTYPE(f)	((f)->t == nil ? SEXTYPE(f)->reg.TR : (f)->t)
 
@@ -120,7 +127,8 @@ handler(char *estr)
 				for(e = h->etab, ne = h->ne; e->s != nil; e++, ne--){
 					if(ematch(e->s, estr) && (str && ne <= 0 || !str && ne > 0)){
 						newpc = e->pc;
-						goto found;
+						if(newpc != NOPC)
+							goto found;
 					}
 				}
 				newpc = e->pc;
@@ -202,9 +210,12 @@ found:
 		D2H(p->exval)->ref++;
 		*eadr = p->exval;
 	}
-	if(m->compiled)
+	if(m->compiled) {
 		R.PC = (Inst*)((ulong)m->prog+newpc);
-	else
+		if(PC_MISALIGNED(R.PC))
+			print("BUG: handler: misaligned R.PC=%p prog=%p newpc=%lud module=%s estr=%s\n",
+				R.PC, (void*)m->prog, newpc, m->m ? m->m->name : "?", estr);
+	} else
 		R.PC = m->prog+newpc;
 	memmove(&p->R, &R, sizeof(R));
 	p->kill = nil;

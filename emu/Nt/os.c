@@ -1,15 +1,24 @@
 #define Unknown win_Unknown
 #define UNICODE
+#ifdef _AMD64_
+/* Prevent windows.h from including winsock.h (conflicts with winsock2.h) */
+#define WIN32_LEAN_AND_MEAN
+#include	<windows.h>
+#include	<winsock2.h>
+#include	<ws2tcpip.h>
+#else
 #include	<windows.h>
 #include <winbase.h>
 #include	<winsock.h>
+#endif
 #undef Unknown
 #include	<excpt.h>
+#ifdef _AMD64_
+#include	<float.h>	/* for _clearfp() */
+#endif
 #include	"dat.h"
 #include	"fns.h"
 #include	"error.h"
-
-#include	"r16.h"
 
 int	SYS_SLEEP = 2;
 int SOCK_SELECT = 3;
@@ -26,6 +35,14 @@ static	HANDLE	errh = INVALID_HANDLE_VALUE;
 static	int	donetermset = 0;
 static	int sleepers = 0;
 
+	wchar_t	*widen(char *s);
+	char		*narrowen(wchar_t *ws);
+	int		widebytes(wchar_t *ws);
+	int		runeslen(Rune*);
+	Rune*	runesdup(Rune*);
+	Rune*	utftorunes(Rune*, char*, int);
+	char*	runestoutf(char*, Rune*, int);
+	int		runescmp(Rune*, Rune*);
 
 __declspec(thread)       Proc    *up;
 
@@ -33,8 +50,11 @@ HANDLE	ntfd2h(int);
 int	nth2fd(HANDLE);
 void	termrestore(void);
 char *hosttype = "Nt";
+#ifdef _AMD64_
+char *cputype = "amd64";
+#else
 char *cputype = "386";
-void	(*coherence)(void) = nofence;
+#endif
 
 static void
 pfree(Proc *p)
@@ -59,8 +79,8 @@ pfree(Proc *p)
 		closepgrp(e->pgrp);
 		closeegrp(e->egrp);
 		closesigs(e->sigs);
+		free(e->user);
 	}
-	free(e->user);
 	free(p->prog);
 	CloseHandle((HANDLE)p->os);
 	free(p);
@@ -162,9 +182,13 @@ kproc(char *name, void (*func)(void*), void *arg, int flags)
 	procs.tail = p;
 	unlock(&procs.l);
 
-	p->pid = (int)CreateThread(0, 16384, tramp, p, 0, &h);
-	if(p->pid <= 0)
-		panic("ran out of  kernel processes");
+	{
+		HANDLE th;
+		th = CreateThread(0, 16384, tramp, p, 0, &h);
+		p->pid = (int)(intptr_t)th;
+		if(th == NULL)
+			panic("ran out of  kernel processes");
+	}
 }
 
 #if(_WIN32_WINNT >= 0x0400)
@@ -181,7 +205,7 @@ oshostintr(Proc *p)
 	p->intwait = 0;
 #if(_WIN32_WINNT >= 0x0400)
 	if(p->syscall == SYS_SLEEP) {
-		QueueUserAPC(sleepintr, (HANDLE) p->pid, (DWORD) p->pid);
+		QueueUserAPC(sleepintr, (HANDLE)(intptr_t) p->pid, (ULONG_PTR) p->pid);
 	}
 #endif
 }
@@ -199,10 +223,8 @@ readkbd(void)
 	DWORD r;
 	char buf[1];
 
-	if(ReadFile(kbdh, buf, sizeof(buf), &r, 0) == FALSE)
-		panic("keyboard fail");
-	if (r == 0)
-		panic("keyboard EOF");
+	if(ReadFile(kbdh, buf, sizeof(buf), &r, 0) == FALSE || r == 0)
+		pexit("keyboard thread", 0);
 
 	if (buf[0] == 0x03) {
 		// INTR (CTRL+C)
@@ -217,7 +239,7 @@ readkbd(void)
 void
 cleanexit(int x)
 {
-	sleep(2);		/* give user a chance to see message */
+	sleep(2);
 	termrestore();
 	ExitProcess(x);
 }
@@ -262,6 +284,38 @@ TrapHandler(LPEXCEPTION_POINTERS ureg)
 	code = ureg->ExceptionRecord->ExceptionCode;
 	// pc = ureg->ContextRecord->Eip;
 
+#ifdef _AMD64_
+	if(code == EXCEPTION_ACCESS_VIOLATION) {
+		const ULONG_PTR *info = ureg->ExceptionRecord->ExceptionInformation;
+		const CONTEXT *ctx = ureg->ContextRecord;
+		const char *vtype;
+		if(info[0] == 0)
+			vtype = "read";
+		else if(info[0] == 1)
+			vtype = "write";
+		else
+			vtype = "exec";
+		print("ACCESS VIOLATION: %s addr=%p RIP=%p\n",
+			vtype,
+			(void*)info[1], (void*)ctx->Rip);
+		print("  RAX=%p RBX=%p RCX=%p RDX=%p\n",
+			(void*)ctx->Rax, (void*)ctx->Rbx, (void*)ctx->Rcx, (void*)ctx->Rdx);
+		print("  R10=%p R12=%p R14=%p R15=%p\n",
+			(void*)ctx->R10, (void*)ctx->R12, (void*)ctx->R14, (void*)ctx->R15);
+		print("  RSP=%p RBP=%p RSI=%p RDI=%p\n",
+			(void*)ctx->Rsp, (void*)ctx->Rbp, (void*)ctx->Rsi, (void*)ctx->Rdi);
+		/* Dump top of x86 stack to trace call chain */
+		{
+			const ULONG_PTR *sp = (const ULONG_PTR*)ctx->Rsp;
+			int j;
+			print("  Stack:");
+			for(j = 0; j < 12; j++)
+				print(" [%d]=%p", j, (void*)sp[j]);
+			print("\n");
+		}
+	}
+#endif
+
 	name = nil;
 	for(i = 0; i < nelem(ecodes); i++) {
 		if(ecodes[i].code == code) {
@@ -289,8 +343,12 @@ TrapHandler(LPEXCEPTION_POINTERS ureg)
 	case EXCEPTION_FLT_STACK_CHECK:
 	case EXCEPTION_FLT_UNDERFLOW:
 		/* clear exception flags and ensure safe empty state */
+#ifdef _AMD64_
+		_clearfp();
+#else
 		_asm { fnclex };
 		_asm { fninit };
+#endif
 	}
 	disfault(nil, name);
 	/* not reached */
@@ -338,6 +396,24 @@ osreboot(char *file, char **argv)
 	}
 }
 
+#ifdef GUI_SDL3
+/*
+ * Worker thread wrapper for emuinit when using SDL3 GUI.
+ * The main thread must remain free for sdl3_mainloop().
+ */
+static DWORD WINAPI
+emuinit_worker(LPVOID arg)
+{
+	char *imod = (char*)arg;
+
+	up = newproc();
+	if(up == nil)
+		panic("cannot create kernel process for emuinit worker");
+	emuinit(imod);
+	return 0;	/* never reached */
+}
+#endif
+
 void
 libinit(char *imod)
 {
@@ -359,11 +435,19 @@ libinit(char *imod)
 	}
 	termset();
 
+#ifndef _AMD64_
 	if((int)INVALID_HANDLE_VALUE != -1 || sizeof(HANDLE) != sizeof(int))
 		panic("invalid handle value or size");
+#endif
 
+	/* Winsock 2.2 on AMD64, 1.1 on 386 */
+#ifdef _AMD64_
+	if(WSAStartup(MAKEWORD(2, 2), &wasdat) != 0)
+		panic("no ws2_32.dll");
+#else
 	if(WSAStartup(MAKEWORD(1, 1), &wasdat) != 0)
 		panic("no winsock.dll");
+#endif
 
 	gethostname(sys, sizeof(sys));
 	kstrdup(&ossysname, sys);
@@ -391,9 +475,30 @@ libinit(char *imod)
 	}
 	kstrdup(&eve, uname);
 
+#ifdef GUI_SDL3
+	/* SDL3: Spawn emuinit on worker thread so main thread can run sdl3_mainloop() */
+	{
+		HANDLE th;
+		DWORD tid;
+		th = CreateThread(NULL, 16384, emuinit_worker, imod, 0, &tid);
+		if(th == NULL)
+			panic("cannot create emuinit worker thread");
+		CloseHandle(th);
+	}
+	/* Return to main() which will call sdl3_mainloop() */
+#else
 	emuinit(imod);
+#endif
 }
 
+/*
+ * On AMD64, FPsave/FPrestore/umult are implemented in asm-amd64-win.asm
+ * (assembled by ml64.exe). They use no-op stubs for FP (OS handles context)
+ * and the MUL instruction for 128-bit multiply.
+ *
+ * On 386, they use MSVC inline assembly.
+ */
+#ifndef _AMD64_
 void
 FPsave(void *fptr)
 {
@@ -427,6 +532,7 @@ umult(ulong a, ulong b, ulong *high)
 	*high = hi;
 	return lo;
 }
+#endif /* !_AMD64_ */
 
 int
 close(int fd)
@@ -478,20 +584,23 @@ write(int fd, void *buf, uint n)
 
 /*
  * map handles and fds.
- * this code assumes sizeof(HANDLE) == sizeof(int),
- * that INVALID_HANDLE_VALUE is -1, and assumes
- * that all tests of invalid fds check only for -1, not < 0
+ *
+ * On 32-bit Windows, sizeof(HANDLE) == sizeof(int) == 4.
+ * On 64-bit Windows, sizeof(HANDLE) == 8 but sizeof(int) == 4.
+ *
+ * We use intptr_t for the intermediate cast to avoid truncation
+ * warnings and data loss on AMD64.
  */
 int
 nth2fd(HANDLE h)
 {
-	return (int)h;
+	return (int)(intptr_t)h;
 }
 
 HANDLE
 ntfd2h(int fd)
 {
-	return (HANDLE)fd;
+	return (HANDLE)(intptr_t)fd;
 }
 
 void
@@ -513,13 +622,18 @@ sbrk(int size)
 {
 	void *brk;
 
-	brk = VirtualAlloc(NULL, size, MEM_COMMIT, PAGE_EXECUTE_READWRITE); 	
+	brk = VirtualAlloc(NULL, size, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
 	if(brk == 0)
 		return (void*)-1;
 
 	return brk;
 }
 
+/*
+ * On AMD64, getcallerpc is in asm-amd64-win.asm.
+ * On 386, it uses inline assembly.
+ */
+#ifndef _AMD64_
 ulong
 getcallerpc(void *arg)
 {
@@ -531,6 +645,7 @@ getcallerpc(void *arg)
 	}
 	return cpc;
 }
+#endif /* !_AMD64_ */
 
 /*
  * Return an abitrary millisecond clock time
@@ -711,5 +826,46 @@ link(char *path, char *next)
 int
 segflush(void *a, ulong n)
 {
+	DWORD old;
+
+	/* Make JIT code executable (W^X: was PAGE_READWRITE during generation) */
+	VirtualProtect(a, n, PAGE_EXECUTE_READ, &old);
+	FlushInstructionCache(GetCurrentProcess(), a, n);
 	return 0;
+}
+
+wchar_t *
+widen(char *s)
+{
+	int n;
+	wchar_t *ws;
+
+	n = utflen(s) + 1;
+	ws = smalloc(n*sizeof(wchar_t));
+	utftorunes(ws, s, n);
+	return ws;
+}
+
+
+char *
+narrowen(wchar_t *ws)
+{
+	char *s;
+	int n;
+
+	n = widebytes(ws);
+	s = smalloc(n);
+	runestoutf(s, ws, n);
+	return s;
+}
+
+
+int
+widebytes(wchar_t *ws)
+{
+	int n = 0;
+
+	while (*ws)
+		n += runelen(*ws++);
+	return n+1;
 }

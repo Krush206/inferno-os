@@ -83,6 +83,8 @@ kstrcpy(char *s, char *t, int ns)
 {
 	int nt;
 
+	if(s == nil || t == nil || ns <= 0)
+		return;
 	nt = strlen(t);
 	if(nt+1 <= ns){
 		memmove(s, t, nt+1);
@@ -682,7 +684,7 @@ static char Edoesnotexist[] = "does not exist";
 int
 walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 {
-	int dev, dotdot, i, n, nhave, ntry, type;
+	int dev, didmount, dotdot, i, n, nhave, ntry, type;
 	Chan *c, *nc;
 	Cname *cname;
 	Mount *f;
@@ -702,9 +704,13 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 	 *    3. move to the first mountpoint along the way.
 	 *    4. repeat.
 	 *
-	 * An invariant is that each time through the loop, c is on the undomount
-	 * side of the mount point, and c's name is cname.
-	 */
+	 * Each time through the loop:
+	 *
+	 *	If didmount==0, c is on the undomount side of the mount point.
+	 *	If didmount==1, c is on the domount side of the mount point.
+	 * 	Either way, c's full path is path.
+  	 */
+	didmount = 0;
 	for(nhave=0; nhave<nnames; nhave+=n){
 		if((c->qid.type&QTDIR)==0){
 			if(nerror)
@@ -731,7 +737,7 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 			}
 		}
 
-		if(!dotdot && !nomount)
+		if(!dotdot && !nomount && !didmount)
 			domount(&c, &mh);
 
 		type = c->type;
@@ -765,19 +771,26 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 		}
 
 		nmh = nil;
+		didmount = 0;
 		if(dotdot) {
 			assert(wq->nqid == 1);
 			assert(wq->clone != nil);
 
 			cname = addelem(cname, "..");
 			nc = undomount(wq->clone, cname);
+			nmh = nil;
 			n = 1;
 		} else {
 			nc = nil;
-			if(!nomount)
-				for(i=0; i<wq->nqid && i<ntry-1; i++)
-					if(findmount(&nc, &nmh, type, dev, wq->qid[i]))
+			nmh = nil;
+			if(!nomount){
+				for(i=0; i<wq->nqid && i<ntry-1; i++){
+					if(findmount(&nc, &nmh, type, dev, wq->qid[i])){
+						didmount = 1;
 						break;
+					}
+				}
+			}
 			if(nc == nil){	/* no mount points along path */
 				if(wq->clone == nil){
 					cclose(c);
@@ -799,6 +812,7 @@ walk(Chan **cp, char **names, int nnames, int nomount, int *nerror)
 				n = wq->nqid;
 				nc = wq->clone;
 			}else{		/* stopped early, at a mount point */
+				didmount = 1;
 				if(wq->clone != nil){
 					cclose(wq->clone);
 					wq->clone = nil;
@@ -896,11 +910,13 @@ growparse(Elemlist *e)
 
 	if(e->nelems % Delta == 0){
 		new = smalloc((e->nelems+Delta) * sizeof(char*));
-		memmove(new, e->elems, e->nelems*sizeof(char*));
+		if(e->nelems > 0)
+			memmove(new, e->elems, e->nelems*sizeof(char*));
 		free(e->elems);
 		e->elems = new;
 		inew = smalloc((e->nelems+Delta+1) * sizeof(int));
-		memmove(inew, e->off, e->nelems*sizeof(int));
+		if(e->nelems > 0)
+			memmove(inew, e->off, e->nelems*sizeof(int));
 		free(e->off);
 		e->off = inew;
 	}
@@ -947,8 +963,8 @@ parsename(char *name, Elemlist *e)
 	}
 }
 
-static void*
-kmemrchr(void *va, int c, long n)
+void*
+memrchr(void *va, int c, long n)
 {
 	uchar *a, *e;
 
@@ -989,6 +1005,7 @@ namec(char *aname, int amode, int omode, ulong perm)
 	Elemlist e;
 	Rune r;
 	Mhead *m;
+	Pgrp *pg;
 	char *createerr, tmperrbuf[ERRMAX];
 	char *name;
 
@@ -1003,10 +1020,13 @@ namec(char *aname, int amode, int omode, ulong perm)
 	 * evaluate starting there.
 	 */
 	nomount = 0;
+	pg = up->env->pgrp;
 	switch(name[0]){
 	case '/':
-		c = up->env->pgrp->slash;
+		rlock(&pg->ns);
+		c = pg->slash;
 		incref(&c->r);
+		runlock(&pg->ns);
 		break;
 	
 	case '#':
@@ -1030,7 +1050,7 @@ namec(char *aname, int amode, int omode, ulong perm)
 		 *	D private secure sockets name space
 		 *	a private TLS name space
 		 */
-		if(up->env->pgrp->nodevs &&
+		if(pg->nodevs &&
 		   (utfrune("|esDa", r) == nil || r == 's' && up->genbuf[n]!='\0'))
 			error(Enoattach);
 		t = devno(r, 1);
@@ -1040,8 +1060,10 @@ namec(char *aname, int amode, int omode, ulong perm)
 		break;
 
 	default:
-		c = up->env->pgrp->dot;
+		rlock(&pg->ns);
+		c = pg->dot;
 		incref(&c->r);
+		runlock(&pg->ns);
 		break;
 	}
 	prefix = name - aname;
@@ -1089,7 +1111,7 @@ namec(char *aname, int amode, int omode, ulong perm)
 		strcpy(tmperrbuf, up->env->errstr);
 	NameError:
 		len = prefix+e.off[npath];
-		if(len < ERRMAX/3 || (name=kmemrchr(aname, '/', len))==nil || name==aname)
+		if(len < ERRMAX/3 || (name=memrchr(aname, '/', len))==nil || name==aname)
 			snprint(up->genbuf, sizeof up->genbuf, "%.*s", len, aname);
 		else
 			snprint(up->genbuf, sizeof up->genbuf, "...%.*s", (int)(len-(name-aname)), name);
@@ -1297,6 +1319,7 @@ if(c->umh != nil){
 			omode |= OTRUNC;
 			goto Open;
 		}
+		panic("namec: not reached");				
 
 	default:
 		panic("unknown namec access %d\n", amode);

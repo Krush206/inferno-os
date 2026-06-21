@@ -1,4 +1,4 @@
-<../../mkconfig
+<$ROOT/mkconfig
 
 TARG=\
 	build.dis\
@@ -64,13 +64,13 @@ SYSMODULES=\
 	debug.m\
 	draw.m\
 	ecmascript.m\
+	menu.m\
 	sh.m\
 	ssl3.m\
 	string.m\
 	strinttab.m\
 	sys.m\
 	tk.m\
-	tkclient.m\
 
 DISBIN=$ROOT/dis/charon
 
@@ -78,15 +78,18 @@ all:V:	charon.dis
 
 <$ROOT/mkfiles/mkdis
 
-install:V:	$ROOT/dis/charon.dis
+install:V:	$ROOT/dis/charon.dis $ROOT/dis/wm/charon.dis
 
 $ROOT/dis/charon.dis:	charon.dis
 	rm -f $target && cp charon.dis $target
 
-charon.dis:	$MODULES $SYS_MODULES
+$ROOT/dis/wm/charon.dis:	charon.dis
+	rm -f $target && cp charon.dis $target
 
-img.dis:	img.b $MODULE $SYS_MODULE
+charon.dis:	$MODULES $SYS_MODULE
+
+img.dis:	img.b $MODULES $SYS_MODULE
 	limbo $LIMBOFLAGS -c -gw img.b
 
 nuke:V:
-	rm -f $ROOT/dis/charon.dis
+	rm -f $ROOT/dis/charon.dis $ROOT/dis/wm/charon.dis

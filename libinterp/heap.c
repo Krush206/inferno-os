@@ -3,7 +3,6 @@
 #include "interp.h"
 #include "pool.h"
 #include "raise.h"
-#include "xalloc.h"
 
 void	freearray(Heap*, int);
 void	freelist(Heap*, int);
@@ -130,6 +129,9 @@ freearray(Heap *h, int swept)
 		}
 	}
 	if(t->ref-- == 1) {
+#if defined(__aarch64__) || defined(__x86_64__) || defined(_M_X64)
+		if(t->initialize == nil)
+#endif
 		free(t->initialize);
 		free(t);
 	}
@@ -150,6 +152,9 @@ freelist(Heap *h, int swept)
 			freeptrs(l->data, t);
 		t->ref--;
 		if(t->ref == 0) {
+#if defined(__aarch64__) || defined(__x86_64__) || defined(_M_X64)
+			if(t->initialize == nil)
+#endif
 			free(t->initialize);
 			free(t);
 		}
@@ -159,7 +164,7 @@ freelist(Heap *h, int swept)
 	l = l->tail;
 	while(l != (List*)H) {
 		t = l->t;
-		th = D2H(l);
+		th = D2H((ulong)l);
 		if(th->ref-- != 1)
 			break;
 		th->t->ref--;	/* should be &Tlist and ref shouldn't go to 0 here nor be 0 already */
@@ -168,6 +173,9 @@ freelist(Heap *h, int swept)
 				freeptrs(l->data, t);
 			t->ref--;
 			if(t->ref == 0) {
+#if defined(__aarch64__) || defined(__x86_64__) || defined(_M_X64)
+				if(t->initialize == nil)
+#endif
 				free(t->initialize);
 				free(t);
 			}
@@ -185,9 +193,7 @@ freemodlink(Heap *h, int swept)
 	Modlink *ml;
 
 	ml = H2D(Modlink*, h);
-	if(ml->m->rt == DYNMOD)
-		freedyndata(ml);
-	else if(!swept)
+	if(!swept)
 		destroy(ml->MP);
 	unload(ml->m);
 }
@@ -243,13 +249,15 @@ dtype(void (*destroy)(Heap*, int), int size, uchar *map, int mapsize)
 {
 	Type *t;
 
-	t = malloc(sizeof(Type)-sizeof(t->map)+mapsize);
+	t = malloc(sizeof(Type)+mapsize);
 	if(t != nil) {
 		t->ref = 1;
 		t->free = destroy;
 		t->mark = markheap;
 		t->size = size;
 		t->np = mapsize;
+		t->initialize = nil;
+		t->destroy = nil;
 		memmove(t->map, map, mapsize);
 	}
 	return t;
@@ -278,7 +286,12 @@ freetype(Type *t)
 	if(t == nil || --t->ref > 0)
 		return;
 
-	xfree(t->initialize);
+#if defined(__aarch64__) || defined(__x86_64__) || defined(_M_X64)
+	/* JIT typecom() uses mmap/VirtualAlloc for type code; skip free() to avoid pool panic.
+	 * This leaks type code on module unload. */
+	if(t->initialize == nil)
+#endif
+	free(t->initialize);
 	free(t);
 }
 

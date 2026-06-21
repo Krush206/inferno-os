@@ -100,6 +100,25 @@ Keyring: module
 		# all the state is hidden
 	};
 
+	# AES-GCM state
+	AESGCMstate: adt
+	{
+		x:	int;		# dummy for C compiler for runt.h
+		# all the state is hidden
+	};
+
+	# ChaCha20 state
+	ChaChastate: adt
+	{
+		x:	int;		# dummy for C compiler for runt.h
+	};
+
+	# P-256 elliptic curve point
+	ECpoint: adt
+	{
+		x:	int;		# dummy for C compiler for runt.h
+	};
+
 	# expanded DES key + state for chaining
 	DESstate: adt
 	{
@@ -194,6 +213,12 @@ Keyring: module
 		ref DigestState;
 	hmac_md5: fn(data: array of byte, n: int, key: array of byte, digest: array of byte, state: ref DigestState):
 		ref DigestState;
+	hmac_sha256: fn(data: array of byte, n: int, key: array of byte, digest: array of byte, state: ref DigestState):
+		ref DigestState;
+	hmac_sha384: fn(data: array of byte, n: int, key: array of byte, digest: array of byte, state: ref DigestState):
+		ref DigestState;
+	hmac_sha512: fn(data: array of byte, n: int, key: array of byte, digest: array of byte, state: ref DigestState):
+		ref DigestState;
 
 	SHA1dlen:	con 20;
 	SHA224dlen:	con 28;
@@ -202,6 +227,20 @@ Keyring: module
 	SHA512dlen:	con 64;
 	MD5dlen:	con 16;
 	MD4dlen:	con 16;
+	SHA3_256dlen:	con 32;
+	SHA3_512dlen:	con 64;
+
+	# SHA-3 digests (FIPS 202, one-shot)
+	sha3_256: fn(buf: array of byte, n: int, digest: array of byte): int;
+	sha3_512: fn(buf: array of byte, n: int, digest: array of byte): int;
+
+	# SLH-DSA (FIPS 205) sizes
+	SLHDSA192S_PKLEN:  con 48;
+	SLHDSA192S_SKLEN:  con 96;
+	SLHDSA192S_SIGLEN: con 16224;
+	SLHDSA256S_PKLEN:  con 64;
+	SLHDSA256S_SKLEN:  con 128;
+	SLHDSA256S_SIGLEN: con 29792;
 
 	# encryption interfaces
 	Encrypt:	con 0;
@@ -211,6 +250,64 @@ Keyring: module
 
 	aessetup: fn(key: array of byte, ivec: array of byte): ref AESstate;
 	aescbc: fn(state: ref AESstate, buf: array of byte, n: int, direction: int);
+
+	aesgcmsetup: fn(key: array of byte, iv: array of byte): ref AESGCMstate;
+	aesgcmencrypt: fn(state: ref AESGCMstate, dat: array of byte, aad: array of byte):
+		(array of byte, array of byte);
+	aesgcmdecrypt: fn(state: ref AESGCMstate, dat: array of byte, aad: array of byte,
+		tag: array of byte): array of byte;
+
+	# ChaCha20-Poly1305 AEAD
+	ccpolyencrypt: fn(dat: array of byte, aad: array of byte,
+		key: array of byte, nonce: array of byte): (array of byte, array of byte);
+	ccpolydecrypt: fn(dat: array of byte, aad: array of byte,
+		tag: array of byte, key: array of byte, nonce: array of byte): array of byte;
+
+	# X25519 (Curve25519 ECDH)
+	x25519:      fn(scalar: array of byte, point: array of byte): array of byte;
+	x25519_base: fn(scalar: array of byte): array of byte;
+
+	# P-256 ECDH + ECDSA
+	p256_keygen:       fn(): (array of byte, ref ECpoint);
+	p256_ecdh:         fn(priv: array of byte, pub: ref ECpoint): array of byte;
+	p256_ecdsa_sign:   fn(priv: array of byte, hash: array of byte): array of byte;
+	p256_ecdsa_verify: fn(pub: ref ECpoint, hash: array of byte, sig: array of byte): int;
+	p256_make_point:   fn(pubkey: array of byte): ref ECpoint;
+	p256_point_bytes:  fn(pub: ref ECpoint): array of byte;
+
+	# P-384 ECDSA verify (raw byte arrays, no ADT)
+	p384_ecdsa_verify: fn(pubkey: array of byte, hash: array of byte, sig: array of byte): int;
+
+	# secp256k1 ECDSA (Ethereum/Bitcoin)
+	secp256k1_keygen:  fn(): (array of byte, array of byte);	# => (priv[32], pub[65])
+	secp256k1_pubkey:  fn(priv: array of byte): array of byte;	# => pub[65]
+	secp256k1_sign:    fn(priv: array of byte, hash: array of byte): array of byte;	# => sig[65] (r||s||v)
+	secp256k1_recover: fn(hash: array of byte, sig: array of byte): array of byte;	# => pub[65]
+
+	# Keccak-256 (Ethereum, pre-NIST domain separator 0x01)
+	Keccak256dlen:	con 32;
+	keccak256:	fn(buf: array of byte, n: int, digest: array of byte): int;
+
+	# Ed25519 raw sign/verify (RFC 8032)
+	ed25519_sign:   fn(seed: array of byte, msg: array of byte): array of byte;
+	ed25519_verify: fn(pk: array of byte, msg: array of byte, sig: array of byte): int;
+
+	# ML-KEM (FIPS 203) post-quantum key encapsulation
+	MLKEM768_PKLEN:  con 1184;
+	MLKEM768_SKLEN:  con 2400;
+	MLKEM768_CTLEN:  con 1088;
+	MLKEM768_SSLEN:  con 32;
+	MLKEM1024_PKLEN: con 1568;
+	MLKEM1024_SKLEN: con 3168;
+	MLKEM1024_CTLEN: con 1568;
+	MLKEM1024_SSLEN: con 32;
+
+	mlkem768_keygen:  fn(): (array of byte, array of byte);	# => (pk, sk)
+	mlkem768_encaps:  fn(pk: array of byte): (array of byte, array of byte);	# => (ct, ss)
+	mlkem768_decaps:  fn(sk: array of byte, ct: array of byte): array of byte;	# => ss
+	mlkem1024_keygen: fn(): (array of byte, array of byte);	# => (pk, sk)
+	mlkem1024_encaps: fn(pk: array of byte): (array of byte, array of byte);	# => (ct, ss)
+	mlkem1024_decaps: fn(sk: array of byte, ct: array of byte): array of byte;	# => ss
 
 	DESbsize: con 8;
 

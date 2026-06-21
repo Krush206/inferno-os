@@ -46,8 +46,10 @@ freepipe(Pipe *p)
 {
 	if(p != nil){
 		free(p->user);
-		free(p->q[0]);
-		free(p->q[1]);
+		if(p->q[0])
+			qfree(p->q[0]);
+		if(p->q[1])
+			qfree(p->q[1]);
 		free(p->pipedir);
 		free(p);
 	}
@@ -69,7 +71,7 @@ pipeattach(char *spec)
 	Chan *c;
 
 	c = devattach('|', spec);
-	p = malloc(sizeof(Pipe));
+	p = mallocz(sizeof(Pipe), 1);
 	if(p == 0)
 		error(Enomem);
 	if(waserror()){

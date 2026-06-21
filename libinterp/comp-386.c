@@ -2,7 +2,6 @@
 #include "isa.h"
 #include "interp.h"
 #include "raise.h"
-#include "xalloc.h"
 
 #define DOT			((ulong)code)
 
@@ -1407,18 +1406,13 @@ comp(Inst *i)
 			genb(0x0f);
 			gen2(Omovzxb, (1<<6)|(0<<3)|4);
 			gen2((0<<6)|(RBX<<3)|RAX, O(String, data));
-			gen2(Ojmpb, sizeof(Rune)==4? 10: 11);
+			gen2(Ojmpb, 11);
 			gen2(Oneg, (3<<6)|(3<<3)|RTA);
 			gen2(0x3b, (3<<6)|(RBX<<3)|RTA);	/* cmp index, len */
 			gen2(0x73, 0xee);		/* JNB */
-			if(sizeof(Rune) == 4){
-				gen2(Oldw, (1<<6)|(0<<3)|4);
-				gen2((2<<6)|(RBX<<3)|RAX, O(String, data));
-			}else{
-				genb(0x0f);
-				gen2(Omovzxw, (1<<6)|(0<<3)|4);
-				gen2((1<<6)|(RBX<<3)|RAX, O(String, data));
-			}
+			genb(0x0f);
+			gen2(Omovzxw, (1<<6)|(0<<3)|4);
+			gen2((1<<6)|(RBX<<3)|RAX, O(String, data));
 			opwst(i, Ostw, RAX);
 			break;
 		}
@@ -1428,16 +1422,10 @@ comp(Inst *i)
 		genb(0x0f);
 		gen2(Omovzxb, (1<<6)|(0<<3)|4);		/* movzbx 12(AX)(RBX*1), RAX */
 		gen2((0<<6)|(RBX<<3)|RAX, O(String, data));
-		if(sizeof(Rune) == 4){
-			gen2(Ojmpb, 4);
-			gen2(Oldw, (1<<6)|(0<<3)|4);		/* movl 12(AX)(RBX*4), RAX */
-			gen2((2<<6)|(RBX<<3)|RAX, O(String, data));
-		}else{
-			gen2(Ojmpb, 5);
-			genb(0x0f);
-			gen2(Omovzxw, (1<<6)|(0<<3)|4);		/* movzwx 12(AX)(RBX*2), RAX */
-			gen2((1<<6)|(RBX<<3)|RAX, O(String, data));
-		}
+		gen2(Ojmpb, 5);
+		genb(0x0f);
+		gen2(Omovzxw, (1<<6)|(0<<3)|4);		/* movzwx 12(AX)(RBX*4), RAX */
+		gen2((1<<6)|(RBX<<3)|RAX, O(String, data));
 		opwst(i, Ostw, RAX);
 		break;
 	case ICASE:
@@ -1521,7 +1509,7 @@ preamble(void)
 	if(comvec)
 		return;
 
-	comvec = xalloc(32);
+	comvec = malloc(32);
 	if(comvec == nil)
 		error(exNomem);
 	code = (uchar*)comvec;
@@ -1537,7 +1525,6 @@ preamble(void)
 	modrm(Ojmprm, O(REG, PC), RTMP, 4);
 
 	segflush(comvec, 32);
-	xactivate(comvec);
 }
 
 static void
@@ -1857,7 +1844,7 @@ typecom(Type *t)
 	n += code - tmp;
 	free(tmp);
 
-	code = xallocz(n);
+	code = mallocz(n, 0);
 	if(code == nil)
 		return;
 
@@ -1871,7 +1858,6 @@ typecom(Type *t)
 			(ulong)t, t->size, (ulong)t->initialize, (ulong)t->destroy, n);
 
 	segflush(t->initialize, n);
-	xactivate(t->initialize);
 }
 
 static void
@@ -1932,7 +1918,7 @@ compile(Module *m, int size, Modlink *ml)
 	n = (n+3)&~3;
 
 	nlit *= sizeof(ulong);
-	base = xallocz(n + nlit);
+	base = mallocz(n + nlit, 0);
 	if(base == nil)
 		goto bad;
 
@@ -1983,7 +1969,6 @@ compile(Module *m, int size, Modlink *ml)
 	m->prog = (Inst*)base;
 	m->compiled = 1;
 	segflush(base, n*sizeof(base));
-	xactivate(base);
 	return 1;
 bad:
 	free(patch);

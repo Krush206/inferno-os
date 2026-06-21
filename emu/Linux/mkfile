@@ -1,19 +1,41 @@
+SYSTARG=Linux
+OBJTYPE=${OBJTYPE:-arm64}
+# Bypass mkconfig - include platform-specific files directly
+SHELLTYPE=sh
+OBJDIR=$SYSTARG/$OBJTYPE
+<$ROOT/mkfiles/mkhost-$SYSTARG
+<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE
+
+#Configurable parameters
+
 CONF=emu			#default configuration
 CONFLIST=emu
 CLEANCONFLIST=
 
-SYSTARG=Linux
-<../../mkconfig
-SYSTARG=Linux
+# GUI Backend Selection
+# Options: headless, sdl3
+# Default: sdl3 (Lucifer GUI via SDL3)
+GUIBACK=sdl3
+
+# GPU Acceleration (TensorRT/CUDA)
+# Set ENABLEGPU=1 to build with GPU support (requires CUDA + TensorRT).
+# Default: disabled. Only available on NVIDIA Jetson (arm64) at this stage.
+ENABLEGPU=0
 
 INSTALLDIR=$ROOT/$SYSTARG/$OBJTYPE/bin	#path of directory where kernel is installed
 
-X11LIBS= -lX11 -lXext	# can remove or override using env section in config files
+#end configurable parameters
 
-<$ROOT/mkfiles/mkfile-$SYSTARG-$OBJTYPE	#set vars based on target system
 
-<| $SHELLNAME ../port/mkdevlist $CONF	#sets $IP, $DEVS, $PORT, $LIBS
+<| AWK=$AWK $SHELLNAME ../port/mkdevlist  $CONF	#sets $IP, $DEVS, $PORT, $LIBS
 <mkfile-$OBJTYPE	# sets $ARCHFILES
+
+# Include GPU configuration (set ENABLEGPU=1 for Jetson TensorRT support)
+<mkfile-gpu-$ENABLEGPU
+
+# GUI backend variables (GUISRC, GUIFLAGS, GUILIBS)
+# Included here for variable definitions only; build rules are below default target.
+<mkfile-gui-$GUIBACK
 
 OBJ=\
 	asm-$OBJTYPE.$O\
@@ -21,25 +43,37 @@ OBJ=\
 	os.$O\
 	kproc-pthreads.$O\
 	segflush-$OBJTYPE.$O\
+	$GUISRC\
 	$CONF.root.$O\
 	lock.$O\
 	$DEVS\
 	$PORT\
 
-LIBNAMES=${LIBS:%=lib%.a}
+#LIBNAMES=${LIBS:%=lib%.a}
 #libs=${LIBS:%=$ROOT/$OBJDIR/lib/lib%.a}
 
 HFILES=\
 
-CFLAGS='-DROOT="'$ROOT'"' -DEMU -I. -I../port -I$ROOT/$SYSTARG/$OBJTYPE/include -I$ROOT/include -I$ROOT/libinterp $CTHREADFLAGS $CFLAGS $EMUOPTIONS
-SYSLIBS= $X11LIBS -lm -lpthread
-KERNDATE=`{$NDATE}
+CFLAGS=\
+	'-DROOT="'$ROOT'"'\
+	-DEMU -I. -I../port\
+	-I$ROOT/$SYSTARG/$OBJTYPE/include\
+	-I$ROOT/include\
+	-I$ROOT/libinterp\
+	$CTHREADFLAGS $CFLAGS $EMUOPTIONS $GUIFLAGS $GPUFLAGS\
+
+KERNDATE=0
+
+SYSLIBS=\
+	$GPULIBS\
+	-lm\
+	-lpthread\
 
 default:V:	$O.$CONF
 
-$O.$CONF:	$OBJ $CONF.c $CONF.root.h $LIBNAMES
+$O.$CONF:	$OBJ $CONF.c $CONF.root.h # $LIBNAMES
 	$CC $CFLAGS '-DKERNDATE='$KERNDATE $CONF.c
-	$LD $LDFLAGS -o $target $OBJ $CONF.$O $LIBFILES $SYSLIBS
+	$LD $LDFLAGS -o $target $OBJ $CONF.$O $LIBFILES $SYSLIBS $GUILIBS
 
 install:V: $O.$CONF
 	cp $O.$CONF $INSTALLDIR/$CONF
@@ -47,4 +81,7 @@ install:V: $O.$CONF
 <../port/portmkfile
 
 devfs.$O:	../port/devfs-posix.c
-devds.$O:	../port/devds.c
+
+# SDL3 backend compile rule (must be after default target)
+draw-sdl3.$O: ../port/draw-sdl3.c
+	$CC $CFLAGS $GUIFLAGS -I. ../port/draw-sdl3.c

@@ -17,8 +17,6 @@ include "keyring.m";
 
 include "security.m";
 
-include "dial.m";
-
 include "string.m";
 
 # see login(6)
@@ -37,16 +35,21 @@ login(id, password, dest: string): (string, ref Keyring->Authinfo)
 	if(rand == nil)
 		return nomod(Random->PATH);
 
-	dial := load Dial Dial->PATH;
-	if(dial == nil)
-		return nomod(Dial->PATH);
-
 	if(dest == nil)
 		dest = "$SIGNER";
-	dest = dial->netmkaddr(dest, "net", "inflogin");
-	lc := dial->dial(dest, nil);
-	if(lc == nil)
-		return (sys->sprint("can't contact login service: %s: %r", dest), nil);
+	# Check if dest already has dial address format (contains '!')
+	hasdelim := 0;
+	for(j := 0; j < len dest; j++)
+		if(dest[j] == '!'){
+			hasdelim = 1;
+			break;
+		}
+	if(!hasdelim)
+		dest = "net!"+dest+"!inflogin";
+
+	(ok, lc) := sys->dial(dest, nil);
+	if(ok < 0)
+		return (sys->sprint("can't contact login service: %r"), nil);
 
 	# push ssl, leave in clear mode for now
 	(err, c) := ssl->connect(lc.dfd);
@@ -66,42 +69,48 @@ login(id, password, dest: string): (string, ref Keyring->Authinfo)
 	if(s != id)
 		return ("unexpected reply from signer: " + s, nil);
 
-	# user->CA	ivec
-	ivec := rand->randombuf(rand->ReallyRandom, 8);
+	# user->CA	ivec (32 bytes: 20 for key derivation salt + 12 for AEAD nonce)
+	ivec := rand->randombuf(rand->ReallyRandom, 32);
 	if(kr->putbytearray(c.dfd, ivec, len ivec) < 0)
 		return (sys->sprint("can't send initialization vector: %r"), nil);
 
-	# start encrypting
+	# Derive 32-byte ChaCha20-Poly1305 key from password + IV
+	# using HKDF (RFC 5869) with HMAC-SHA256:
+	#   Extract: PRK = HMAC-SHA256(salt=ivec[0:20], IKM=SHA-256(password))
+	#   Expand:  key = HMAC-SHA256(PRK, "infernode login aead" || 0x01)
 	pwbuf := array of byte password;
-	digest := array[Keyring->SHA1dlen] of byte;
-	kr->sha1(pwbuf, len pwbuf, digest, nil);
-	pwbuf = array[8] of byte;
-	for(i := 0; i < 8; i++)
-		pwbuf[i] = digest[i] ^ digest[8+i];
-	for(i = 0; i < 4; i++)
-		pwbuf[i] ^= digest[16+i];
-	for(i = 0; i < 8; i++)
-		pwbuf[i] ^= ivec[i];
-	err = ssl->secret(c, pwbuf, pwbuf);
-	if(err != nil)
-		return ("can't set secret: " + err, nil);
-	if(sys->fprint(c.cfd, "alg rc4") < 0)
-		return (sys->sprint("can't push alg rc4: %r"), nil);
-	#if(sys->fprint(c.cfd, "alg desebc") < 0)
-	#	return (sys->sprint("can't push alg desecb: %r"), nil);
+	pwdigest := array[Keyring->SHA256dlen] of byte;
+	kr->sha256(pwbuf, len pwbuf, pwdigest, nil);
+	salt := ivec[0:20];
+	prk := array[Keyring->SHA256dlen] of byte;
+	kr->hmac_sha256(pwdigest, len pwdigest, salt, prk, nil);
+	hkdfinfo := array of byte "infernode login aead";
+	expandinput := array[len hkdfinfo + 1] of byte;
+	expandinput[0:] = hkdfinfo;
+	expandinput[len hkdfinfo] = byte 1;
+	aeadkey := array[Keyring->SHA256dlen] of byte;
+	kr->hmac_sha256(expandinput, len expandinput, prk, aeadkey, nil);
+	nonce := ivec[20:32];
 
-	# CA -> user	key(alpha**r0 mod p)
-	(s, err) = kr->getstring(c.dfd);
+	# CA -> user	AEAD-encrypted alpha**r0 mod p
+	# Receive ciphertext + 16-byte Poly1305 tag
+	ciphertext: array of byte;
+	authtag: array of byte;
+	(ciphertext, err) = kr->getbytearray(c.dfd);
 	if(err != nil){
-		if(err == "failure") # calculated secret is wrong
+		if(err == "failure")
 			return ("name or secret incorrect (alpha**r0 mod p)", nil);
 		return ("remote:" + err, nil);
 	}
+	(authtag, err) = kr->getbytearray(c.dfd);
+	if(err != nil)
+		return ("remote:" + err, nil);
 
-	# stop encrypting
-	if(sys->fprint(c.cfd, "alg clear") < 0)
-		return (sys->sprint("can't push alg clear: %r"), nil);
-	alphar0 := IPint.b64toip(s);
+	# Decrypt with ChaCha20-Poly1305 (AEAD - authenticates and decrypts)
+	plaintext := kr->ccpolydecrypt(ciphertext, nil, authtag, aeadkey, nonce);
+	if(plaintext == nil)
+		return ("name or secret incorrect (AEAD decryption failed)", nil);
+	alphar0 := IPint.b64toip(string plaintext);
 
 	# CA->user	alpha
 	(s, err) = kr->getstring(c.dfd);
@@ -144,8 +153,8 @@ login(id, password, dest: string): (string, ref Keyring->Authinfo)
 	err = ssl->secret(c, secret, secret);
 	if(err != nil)
 		return ("can't set digesting: " + err, nil);
-	if(sys->fprint(c.cfd, "alg sha1") < 0)
-		return (sys->sprint("can't push alg sha1: %r"), nil);
+	if(sys->fprint(c.cfd, "alg sha256") < 0)
+		return (sys->sprint("can't push alg sha256: %r"), nil);
 
 	# CA->user	CA's public key, SHA(CA's public key + secret)
 	(s, err) = kr->getstring(c.dfd);

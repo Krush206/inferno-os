@@ -42,7 +42,8 @@ linkm(Module *m, Modlink *ml, int i, Import *ldt)
 		if(strcmp(ldt->name, l->name) == 0)
 			break;
 
-	if(l == nil) {
+	/* the loop ends on the nil-name terminator, never a nil l */
+	if(l->name == nil) {
 		snprint(e, sizeof(e), "link failed fn %s->%s() not implemented", m->name, ldt->name);
 		goto bad;
 	}
@@ -99,9 +100,7 @@ linkmod(Module *m, Import *ldt, int mkmp)
 	ml = mklinkmod(m, i);
 
 	if(mkmp){
-		if(m->rt == DYNMOD)
-			newdyndata(ml);
-		else if(mkmp && m->origmp != H && m->ntype > 0) {
+		if(mkmp && m->origmp != H && m->ntype > 0) {
 			t = m->type[0];
 			h = nheap(t->size);
 			h->t = t;

@@ -6,12 +6,14 @@ os \- interface to host OS commands (hosted Inferno only)
 .br
 .B os
 [
-.B -DrcCbn
+.B -b
 ] [
 .B -m
 .I mountpoint
 ] [
 .BI -d " dir"
+] [
+.B -n
 ] [
 .BI -N " level"
 ]
@@ -25,17 +27,7 @@ uses a
 .IR cmd (3)
 device to execute a command,
 .IR cmd ,
-on a host system. By default, the current working directory of the calling process inside Inferno
-is used as the
-.I cmd
-working directory and
-.B $emuroot
-is prepended to
-.I cmd
-arguments beginning with the
-.I /
-character. 
-
+on a host system.
 If the
 .B -m
 option is given,
@@ -52,33 +44,7 @@ option causes the command to run in directory
 .IR dir ;
 an error results and the command will not run if
 .I dir
-does not exist or is inaccessible. If the
-.B -r
-option is specified, 
-.B $emuroot
-will not be prepended to the working directory. If the
-.B -c
-option is specified, the current working directory will not be used for execution. If the
-.B -r
-and
-.B -d
-options are not set, then the Inferno root directory will be used as the working directory. 
-Note that the
-.B -d
-option overrides the 
-.B -r
-and
-.B -c
-options. The
-.B -C
-option disables the prepending of
-.B $emuroot
-to arguments to
-.I cmd
-beginning with the
-.I /
-character. 
-
+does not exist or is inaccessible.
 The standard output and standard error of the command appear on the standard output
 and standard error streams of the
 .I os

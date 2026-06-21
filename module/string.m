@@ -15,22 +15,17 @@ String: module
 	splitr:		fn(s, cl: string): (string, string);
 	drop:		fn(s, cl: string): string;
 	take:		fn(s, cl: string): string;
-	in:			fn(c: int, cl: string): int;
-	containscl:	fn(s, cl: string): int;
-	countcl:	fn(s: string, cl: string): int;
+	in:		fn(c: int, cl: string): int;
 
 	# in these, the second string is a string to match, not a class
 	splitstrl:	fn(s, t: string): (string, string);
 	splitstrr:	fn(s, t: string): (string, string);
-	replace:	fn(in, s, with: string, max: int): string;
-	contains:	fn(in, s: string): int;
 
 	# is first arg a prefix of second?
 	prefix:		fn(pre, s: string): int;
 
 	tolower:	fn(s: string): string;
 	toupper:	fn(s: string): string;
-	hasws:		fn(s: string): int;
 
 	# string to int returning value, remainder
 	toint:		fn(s: string, base: int): (int, string);
@@ -42,6 +37,4 @@ String: module
 	quoted:		fn(argv: list of string): string;
 	quotedc:		fn(argv: list of string, cl: string): string;
 	unquoted:		fn(args: string): list of string;
-	fields:		fn(s: string): list of string;
-	qtokenize:	fn(s: string): (list of string, string);
 };

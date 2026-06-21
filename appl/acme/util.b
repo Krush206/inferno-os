@@ -2,6 +2,7 @@ implement Utils;
 
 include "common.m";
 include "sh.m";
+include "env.m";
 
 sys : Sys;
 draw : Draw;
@@ -114,6 +115,25 @@ strncmp(s, t : string, n : int) : int
 	return 0;
 }
 
+env : Env;
+
+getenv(s : string) : string
+{
+	if (env == nil)
+		env = load Env Env->PATH;
+	e := env->getenv(s);
+	if(e != nil && e[len e - 1] == '\n')	# shell bug
+		return e[0: len e -1];
+	return e;
+}
+
+setenv(s, t : string)
+{
+	if (env == nil)
+		env = load Env Env->PATH;
+	env->setenv(s, t);
+}
+
 stob(s : string, n : int) : array of byte
 {
 	b := array[2*n] of byte;
@@ -143,7 +163,60 @@ reverse(ol : list of string) : list of string
 	return nl;
 }
 
-exec(cmd : string, argl : list of string)
+nextarg(p : ref Arg) : int
+{
+	bp : string;
+
+	if(p.av != nil){
+		bp = hd p.av;
+		if(bp != nil && bp[0] == '-'){
+			p.p = bp[1:];
+			p.av = tl p.av;
+			return 1;
+		}
+	}
+	p.p = nil;
+	return 0;
+}
+
+arginit(av : list of string) : ref Arg
+{
+	p : ref Arg;
+
+	p = ref Arg;
+	p.arg0 = hd av;
+	p.av = tl av;
+	nextarg(p);
+	return p;
+}
+
+argopt(p : ref Arg) : int
+{
+	r : int;
+
+	if(p.p == nil && nextarg(p) == 0)
+		return 0;
+	r = p.p[0];
+	p.p = p.p[1:];
+	return r;
+}
+
+argf(p : ref Arg) : string
+{
+	bp : string;
+
+	if(p.p != nil){
+		bp = p.p;
+		p.p = nil;
+	} else if(p.av != nil){
+		bp = hd p.av;
+		p.av = tl p.av;
+	} else
+		bp = nil;
+	return bp;
+}
+
+exec(cmd : string, argl : list of string):string 
 {
 	file := cmd;
 	if(len file<4 || file[len file-4:]!=".dis")
@@ -159,11 +232,12 @@ exec(cmd : string, argl : list of string)
 		}
 		if(c == nil){
 			# debug(sys->sprint("file %s not found\n", file));
-			sys->fprint(stderr, "%s: %s\n", cmd, err);
-			return;
+			# sys->fprint(stderr, "%s: %s\n", cmd, err);
+			return err;
 		}
 	}
 	c->init(acme->acmectxt, argl);
+	return nil;
 }
 
 getuser() : string
@@ -423,6 +497,7 @@ errorwin(dir : string, ndir : int, incl : array of string, nincl : int) : ref Wi
 	r = nil;
 	for(i=nincl; --i>=0; )
 		w.addincl(incl[i], n);
+	w.autoindent = dat->globalautoindent;
 	return w;
 }
 
@@ -463,7 +538,7 @@ warning(md : ref Mntdir, s : string)
 		w.owner = 'E';
 	w.commit(t);
 	(q0, n) = t.bsinsert(t.file.buf.nc, s, len s, TRUE);
-	t.show(q0, q0+n, TRUE);
+	t.show(q0, q0+n);
 	t.w.settag();
 	scrl->scrdraw(t);
 	w.owner = owner;

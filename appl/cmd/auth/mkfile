@@ -1,27 +1,24 @@
-<../../../mkconfig
+<$ROOT/mkconfig
 
 DIRS=\
 	factotum\
 
 TARG=\
-	aescbc.dis\
-	ai2key.dis\
 	changelogin.dis\
 	countersigner.dis\
 	convpasswd.dis\
 	createsignerkey.dis\
-	dsagen.dis\
 	keyfs.dis\
 	keysrv.dis\
 	getpk.dis\
 	logind.dis\
 	mkauthinfo.dis\
-	newns.dis\
 	passwd.dis\
-	rsagen.dis\
-	secstore.dis\
 	signer.dis\
 	verify.dis\
+	secstore.dis\
+	secstored.dis\
+	secstore-setup.dis\
 
 SYSMODULES=\
 	arg.m\

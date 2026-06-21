@@ -1,9 +1,139 @@
-Inferno® is a distributed operating system, originally developed at Bell Labs, but now developed and maintained by Vita Nuova® as Free Software.  Applications written in Inferno's concurrent programming language, Limbo, are compiled to its portable virtual machine code (Dis), to run anywhere on a network in the portable environment that Inferno provides.  Unusually, that environment looks and acts like a complete operating system.
+# InferNode
 
-The use of a high-level language and virtual machine is sensible but mundane. The interesting thing is the system's representation of services and resources.  They are represented in a file-like name hiearchy.  Programs access them using only the file operations open, read/write, and close.  The 'files' may of course represent stored data, but may also be devices, network and protocol interfaces, dynamic data sources, and services.  The approach unifies and provides basic naming, structuring, and access control mechanisms for all system resources.  A single file-service protocol (the same as Plan 9's 9P) makes all those resources available for import or export throughout the network in a uniform way, independent of location. An application simply attaches the resources it needs to its own per-process name hierarchy ('name space').
+[![Latest release](https://img.shields.io/github/v/release/infernode-os/infernode?display_name=tag&cacheSeconds=3600)](https://github.com/infernode-os/infernode/releases/latest)
+[![Container image](https://img.shields.io/badge/ghcr.io-infernode--os%2Finfernode-blue?logo=docker)](https://github.com/infernode-os/infernode/pkgs/container/infernode)
+[![CI](https://github.com/infernode-os/infernode/actions/workflows/ci.yml/badge.svg)](https://github.com/infernode-os/infernode/actions/workflows/ci.yml)
+[![Security Analysis](https://github.com/infernode-os/infernode/actions/workflows/security.yml/badge.svg)](https://github.com/infernode-os/infernode/actions/workflows/security.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/infernode-os/infernode/badge)](https://scorecard.dev/viewer/?uri=github.com/infernode-os/infernode)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12422/badge)](https://www.bestpractices.dev/projects/12422)
+[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev/spec/v1.0/levels#build-l3)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-The system can be used to build portable client and server applications. It makes it straightforward to build lean applications that share all manner of resources over a network, without the cruft of much of the 'Grid' software one sees.
+**64-bit Inferno® OS for embedded systems, servers, and AI agents.**
 
-Inferno can run 'native' on various ARM, PowerPC, SPARC and x86 platforms but also 'hosted', under an existing operating system (including AIX, FreeBSD, Irix, Linux, MacOS X, Plan 9, and Solaris), again on various processor types.
+InferNode is a modern Inferno® distribution with JIT compilation on AMD64 (14×) and ARM64 (9×), namespace-isolated AI agents (Veltro), an optional SDL3 GUI (Lucia + Xenith), and a complete Plan 9-inspired environment — all in under 30 MB of RAM.
 
-This Bitbucket project includes source for the basic applications, Inferno itself (hosted and native), all supporting software, including the native compiler suite, essential executables and supporting files.
+## Quick Start
+
+### Install (recommended)
+
+Every tagged release ships signed binaries for macOS, Linux, and Windows on the [latest release page](https://github.com/infernode-os/infernode/releases/latest). No toolchain, no build step — download and run.
+
+- **macOS (Apple Silicon)** — `infernode-*-macos-arm64.dmg`: open, drag to Applications, launch.
+- **Windows (x86_64)** — `infernode-*-windows-amd64-gui.zip`: extract, **double-click `setup-windows.bat`** (it clears the Mark-of-the-Web tag from the bundle and configures an LLM backend), then double-click `InferNode.exe`. (Until code-signing lands, the unsigned `InferNode.exe` would otherwise be silently blocked by SmartScreen after browser download — Windows propagates Mark-of-the-Web from the zip to every extracted file. `.bat` files are exempt from that gate, so `setup-windows.bat` runs anyway and its first job is to unblock the rest of the bundle.)
+- **Linux x86_64 (GUI)** — `infernode-*-linux-amd64-gui.tar.gz`: SDL3 is bundled.
+- **Linux ARM64 (GUI)** — `infernode-*-linux-arm64-gui.tar.gz`: for Jetson, Raspberry Pi, etc.
+- **Linux (headless)** — `infernode-*-linux-amd64.tar.gz` or `infernode-*-linux-arm64.tar.gz`.
+- **Container** — multi-arch (amd64 + arm64) headless image on GHCR:
+  ```bash
+  docker run -it ghcr.io/infernode-os/infernode:latest
+  ```
+
+```bash
+tar xzf infernode-*-linux-*-gui.tar.gz
+cd infernode-*-linux-*-gui
+./infernode                   # or ./infernode-headless in the non-GUI tarballs
+./setup-desktop.sh            # optional: app-menu/dock icon, or `infernode` on $PATH
+```
+
+> Pick the tarball that matches your CPU: `amd64` for Intel/AMD, `arm64` for Jetson / Raspberry Pi / Apple-Silicon Linux. The wrong arch fails with `ld-linux-aarch64.so.1: No such file` (or similar).
+
+Every release asset is published with a cosign bundle (`.pem` + `.sig`) and a signed `SHA256SUMS.txt`; container images carry SLSA build provenance. See [Releases](https://github.com/infernode-os/infernode/releases) for the full history.
+
+Code signing for Windows builds is provided by the [SignPath Foundation](https://signpath.org/) — a non-profit that signs open-source releases with certificates issued by SSL.com. Signed Windows binaries get verified Publisher metadata and Microsoft SmartScreen reputation; without signing, browser-downloaded zips carry a Mark-of-the-Web tag that Windows propagates to every extracted file and SmartScreen then silently blocks (handled in the meantime by `setup-windows.bat`, which clears the tag from the bundle on first run — see the Windows install bullet above).
+
+### Build from source
+
+Prefer a release unless you need bleeding-edge `master` or a platform without a prebuilt binary.
+
+**Linux (x86_64 or ARM64):**
+```bash
+git clone https://github.com/infernode-os/infernode.git
+cd infernode
+./install-sdl3.sh              # one-time, GUI only
+./build-linux-amd64.sh         # or ./build-linux-arm64.sh; add 'headless' to skip SDL3
+# GUI:
+./emu/Linux/o.emu -c1 -pheap=1024m -pmain=1024m -pimage=1024m -r$PWD sh -l /lib/lucifer/boot.sh
+# Headless (Inferno ';' shell):
+./emu/Linux/o.emu -c1 -r$PWD sh -l
+```
+
+**macOS (Apple Silicon):**
+```bash
+git clone https://github.com/infernode-os/infernode.git
+cd infernode
+./makemk.sh                    # bootstrap mk (one-time)
+brew install sdl3 sdl3_ttf     # GUI only
+./build-macos-sdl3.sh          # or ./build-macos-headless.sh
+# GUI:
+./emu/MacOSX/o.emu -c1 -pheap=1024m -pmain=1024m -pimage=1024m -r$PWD sh -l /lib/lucifer/boot.sh
+# Headless:
+./emu/MacOSX/o.emu -c1 -r$PWD sh -l
+```
+
+**Windows (x86_64)** — from an **x64 Native Tools Command Prompt**:
+```powershell
+powershell -ExecutionPolicy Bypass -File build-windows-amd64.ps1
+# Headless (Inferno ';' shell):
+.\emu\Nt\o.emu.exe -c1 -r%CD% sh -l
+```
+For the SDL3 GUI on Windows, see [docs/WINDOWS-BUILD.md](docs/WINDOWS-BUILD.md); the launch shape matches the macOS/Linux GUI lines above.
+
+stdout/stderr stream to the terminal; Ctrl-C exits. `-c1` enables the JIT; `-r$PWD` tells the emulator to use the working tree as the Inferno® root, so `mk install` results show up on the next launch. See [QUICKSTART.md](QUICKSTART.md#running-for-development) and [docs/USER-MANUAL.md](docs/USER-MANUAL.md) for more.
+
+## Highlights
+
+- **Lightweight** — 15–30 MB RAM, 2-second startup, ~10 MB on disk.
+- **JIT compiled** — native code generation on AMD64 and ARM64; interpreter fallback everywhere.
+- **AI agents** — namespace-isolated [Veltro](appl/veltro/SECURITY.md) agents with 39 tool modules, LLM integration via 9P, and formally verified containment.
+- **GUI (optional)** — three-zone tiling UI (Lucia) and an AI-native text environment ([Xenith](docs/XENITH.md)), rendered via SDL3 (Metal / Vulkan / D3D).
+- **Matrix** — compositional module runtime: Limbo `.dis` modules loaded against mounted 9P namespaces, arranged from a [text composition file](doc/matrix-architecture.md), drivable by hand (clickable picker + right-click menu in Lucifer) or by agents through `/n/matrix/ctl`.
+- **Payments** — native cryptocurrency wallet with [x402](docs/WALLET-AND-PAYMENTS.md) payment protocol, ERC-20 tokens, and budget-enforced agent spending. **Experimental — testnet only.**
+- **Go on Dis** — the [GoDis compiler](tools/godis/README.md) translates Go source to Dis bytecode; 190+ test programs pass end-to-end.
+- **Formally verified** — namespace isolation proven in TLA+ (3.17B states), SPIN, and CBMC.
+- **Quantum-safe crypto** — ML-KEM, ML-DSA, SLH-DSA (FIPS 203/204/205).
+- **Complete** — 800+ Limbo source files, a full shell, TCP/IP, 9P, and 815 compiled utilities.
+
+## Platforms
+
+Run with `emu -c1` to enable the JIT (Dis bytecode → native code at module load).
+
+| Platform | CPU | JIT speedup | Notes |
+|----------|-----|-------------|-------|
+| Linux AMD64 | AMD Ryzen 7 H 255 | **14.2×** | Servers, containers, workstations |
+| macOS ARM64 | Apple M4 | **9.6×** | SDL3 GUI with Metal |
+| Linux ARM64 | Cortex-A78AE (Jetson) | **8.3×** | Jetson AGX, Raspberry Pi 4/5 |
+| Windows AMD64 | Intel / AMD x86_64 | **5.7×** | SDL3 GUI with D3D |
+
+Speedups are v1 suite (6 benchmarks, best-of-3). Full data: [docs/BENCHMARKS.md](docs/BENCHMARKS.md). Performance envelope: [docs/PERFORMANCE-SPECS.md](docs/PERFORMANCE-SPECS.md).
+
+## Documentation
+
+- [QUICKSTART.md](QUICKSTART.md) — running in under a minute
+- [docs/USER-MANUAL.md](docs/USER-MANUAL.md) — namespaces, devices, host integration
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system architecture
+- [docs/XENITH.md](docs/XENITH.md) — AI-native text environment
+- [doc/matrix-architecture.md](doc/matrix-architecture.md) — Matrix compositional module runtime
+- [docs/WALLET-AND-PAYMENTS.md](docs/WALLET-AND-PAYMENTS.md) — wallet, x402, secstore, key management
+- [appl/veltro/SECURITY.md](appl/veltro/SECURITY.md) — Veltro agent security model
+- [tools/godis/README.md](tools/godis/README.md) — Go-to-Dis compiler architecture
+- [docs/WINDOWS-BUILD.md](docs/WINDOWS-BUILD.md) — Windows build and SDL3 GUI
+- [docs/DIFFERENCES-FROM-STANDARD-INFERNO.md](docs/DIFFERENCES-FROM-STANDARD-INFERNO.md) — how InferNode differs from upstream
+- [formal-verification/README.md](formal-verification/README.md) — TLA+, SPIN, CBMC proofs
+- [docs/DOCUMENTATION-INDEX.md](docs/DOCUMENTATION-INDEX.md) — full index (100+ documents)
+
+## Contributing
+
+Contributions welcome — security audits, 9P integrations, bug fixes, and documentation all help. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## About
+
+InferNode extends the MIT-licensed Inferno® OS with JIT compilers for AMD64 and ARM64, the Veltro AI agent system with formally verified namespace isolation, a cryptocurrency wallet with the x402 payment protocol, quantum-safe cryptography, a Go-to-Dis compiler, and an optional SDL3 GUI (Lucia + Xenith). It targets embedded systems, servers, and AI agent applications where a lightweight footprint and capability-based security matter.
+
+## License
+
+MIT, as with the original Inferno® OS. See [LICENSE](LICENSE).
+
+---
+
+<sub>Inferno® is a distributed operating system, originally developed at Bell Labs, and now maintained by trademark owner Vita Nuova®.</sub>

@@ -1,6 +1,11 @@
 typedef uchar		BYTE;		/* 8  bits */
-typedef int		WORD;		/* 32 bits */
-typedef unsigned int	UWORD;		/* 32 bits */
+/*
+ * WORD and UWORD are now architecture-specific (intptr/uintptr).
+ * On 64-bit systems like ARM64, these are 64 bits to match pointer size.
+ * This follows the inferno64 pattern for 64-bit Dis VM support.
+ */
+typedef intptr		WORD;		/* pointer-sized signed int */
+typedef uintptr		UWORD;		/* pointer-sized unsigned int */
 typedef vlong		LONG;		/* 64 bits */
 typedef uvlong		ULONG;		/* 64 bits */
 typedef double		REAL;		/* 64 double IEEE754 */
@@ -191,8 +196,8 @@ struct Altc
 
 struct Alt
 {
-	int	nsend;
-	int	nrecv;
+	WORD	nsend;	/* Must match IBY2WD in limbo compiler (pointer-sized) */
+	WORD	nrecv;	/* Must match IBY2WD in limbo compiler (pointer-sized) */
 	Altc	ac[1];
 };
 
@@ -384,6 +389,7 @@ extern	int	gccolor;
 extern	int	minvalid;
 
 extern	int		Dconv(Fmt*);
+extern	void		acheck(int, int);
 extern	void		acquire(void);
 extern	void		addrun(Prog*);
 extern	void		altdone(Alt*, Prog*, Channel*, int);
@@ -419,8 +425,15 @@ extern	int		dynldable(int);
 extern	void		iqlock(ILock*);
 extern	void		iqunlock(ILock*);
 extern	void		loadermodinit(void);
-extern	void		error(char*);
-extern	void		errorf(char*, ...);
+#ifndef INF_NORETURN
+#  if defined(__GNUC__) || defined(__clang__)
+#    define INF_NORETURN __attribute__((noreturn))
+#  else
+#    define INF_NORETURN	/* kencc and other compilers: no-op */
+#  endif
+#endif
+extern	void		error(char*) INF_NORETURN;
+extern	void		errorf(char*, ...) INF_NORETURN;
 extern	void		extend(void);
 extern	void		freedyncode(Module*);
 extern	void		freedyndata(Modlink*);

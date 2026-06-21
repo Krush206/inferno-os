@@ -1374,18 +1374,18 @@ ecom(Src *src, Node *nto, Node *n)
 		if(nto->addable >= Ralways)
 			nto = ecom(src, talloc(&tto, nto->ty, nil), nto);
 		op = IINDX;
-		switch(left->ty->tof->size){
-		case IBY2LG:
+		/*
+		 * On 64-bit systems, IBY2WD == IBY2LG == 8.
+		 * Use if-else to avoid duplicate case values.
+		 */
+		if(left->ty->tof->size == IBY2LG) {
 			op = IINDL;
 			if(left->ty->tof == treal)
 				op = IINDF;
-			break;
-		case IBY2WD:
+		} else if(left->ty->tof->size == IBY2WD) {
 			op = IINDW;
-			break;
-		case 1:
+		} else if(left->ty->tof->size == 1) {
 			op = IINDB;
-			break;
 		}
 		genrawop(src, op, left, nto, right);
 		// array[] of {....} [index] frees array too early (before index value used)
@@ -2401,7 +2401,7 @@ globalconst(Node *n)
 	Sym *s;
 	char buf[32];
 
-	seprint(buf, buf+sizeof(buf), ".i.%.8lux", (long)n->val);
+	seprint(buf, buf+sizeof(buf), ".i.%.8lux", (ulong)(n->val & 0xFFFFFFFF));
 	s = enter(buf, 0);
 	d = s->decl;
 	if(d == nil){
@@ -2420,7 +2420,7 @@ globalBconst(Node *n)
 	Sym *s;
 	char buf[32];
 
-	seprint(buf, buf+sizeof(buf), ".B.%.8lux.%8lux", (long)(n->val>>32), (long)n->val);
+	seprint(buf, buf+sizeof(buf), ".B.%.8ux.%.8ux", (u32int)((n->val>>32) & 0xFFFFFFFF), (u32int)(n->val & 0xFFFFFFFF));
 
 	s = enter(buf, 0);
 	d = s->decl;
@@ -2461,7 +2461,7 @@ globalfconst(Node *n)
 	ulong dv[2];
 
 	dtocanon(n->rval, dv);
-	seprint(buf, buf+sizeof(buf), ".f.%.8lux.%8lux", dv[0], dv[1]);
+	seprint(buf, buf+sizeof(buf), ".f.%.8lux.%.8lux", (ulong)(dv[0] & 0xFFFFFFFF), (ulong)(dv[1] & 0xFFFFFFFF));
 	s = enter(buf, 0);
 	d = s->decl;
 	if(d == nil){

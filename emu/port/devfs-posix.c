@@ -9,11 +9,12 @@
 
 #include	<sys/types.h>
 #include	<sys/stat.h>
-#include	<fcntl.h>
+#include	<sys/fcntl.h>
 #include	<sys/socket.h>
 #include	<sys/un.h>
 #include	<utime.h>
 #include	<dirent.h>
+#include	<unistd.h>	/* getuid/getgid — INFR-174 iOS hostowner pin */
 #include	<stdio.h>
 #define	__EXTENSIONS__
 #undef	getwd
@@ -148,6 +149,7 @@ fswalk(Chan *c, Chan *nc, char **name, int nname)
 	volatile int alloc;
 	Walkqid *wq;
 	struct stat st;
+	int gotstat;
 	char *n;
 	Cname *next;
 	Cname *volatile current;
@@ -157,8 +159,9 @@ fswalk(Chan *c, Chan *nc, char **name, int nname)
 		isdir(c);
 
 	alloc = 0;
+	gotstat = 0;
 	current = nil;
-	wq = smalloc(sizeof(Walkqid)+(nname-1)*sizeof(Qid));
+	wq = smalloc(sizeof(Walkqid)+(nname > 0 ? nname-1 : 0)*sizeof(Qid));
 	if(waserror()){
 		if(alloc && wq->clone != nil)
 			cclose(wq->clone);
@@ -188,6 +191,7 @@ fswalk(Chan *c, Chan *nc, char **name, int nname)
 			incref(&next->r);
 			next = addelem(current, n);
 			//print("** ufs walk '%s' -> %s [%s]\n", current->s, n, next->s);
+			gotstat = 1;
 			if(xstat(next->s, &st) < 0){
 				cnameclose(next);
 				if(j == 0)
@@ -210,7 +214,7 @@ fswalk(Chan *c, Chan *nc, char **name, int nname)
 	}else if(wq->clone){
 		nc->aux = smalloc(sizeof(Fsinfo));
 		nc->type = c->type;
-		if(nname > 0) {
+		if(nname > 0 && gotstat) {
 			FS(nc)->gid = st.st_gid;
 			FS(nc)->uid = st.st_uid;
 			FS(nc)->mode = st.st_mode;
@@ -263,7 +267,7 @@ opensocket(char *path)
 	su.sun_family = AF_UNIX;
 	if(strlen(path)+1 > sizeof su.sun_path)
 		error("unix socket name too long");
-	strcpy(su.sun_path, path);
+	snprintf(su.sun_path, sizeof su.sun_path, "%s", path);
 	if((fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
 		return -1;
 	if(connect(fd, (struct sockaddr*)&su, sizeof su) >= 0)
@@ -366,7 +370,7 @@ fscreate(Chan *c, char *name, int mode, ulong perm)
 		if(fd < 0)
 			oserror();
 		fchmod(fd, perm);
-		fchown(fd, up->env->uid, FS(c)->gid);
+		if(fchown(fd, up->env->uid, FS(c)->gid)){/*nothing*/}
 		if(fstat(fd, &st) <0){
 			close(fd);
 			oserror();
@@ -385,7 +389,7 @@ fscreate(Chan *c, char *name, int mode, ulong perm)
 		if(fd < 0)
 			oserror();
 		fchmod(fd, perm);
-		fchown(fd, up->env->uid, FS(c)->gid);
+		if(fchown(fd, up->env->uid, FS(c)->gid)){/*nothing*/}
 		if(fstat(fd, &st) < 0){
 			close(fd);
 			oserror();
@@ -449,8 +453,12 @@ fsread(Chan *c, void *va, long n, vlong offset)
 				oserror();
 		}
 		r = read(FS(c)->fd, va, n);
-		if(r < 0)
-			oserror();
+		if(r < 0){
+			if(errno == EINTR)
+				r = read(FS(c)->fd, va, n);
+			if(r < 0)
+				oserror();
+		}
 	}
 	return r;
 }
@@ -468,8 +476,12 @@ fswrite(Chan *c, void *va, long n, vlong offset)
 			oserror();
 	}
 	r = write(FS(c)->fd, va, n);
-	if(r < 0)
-		oserror();
+	if(r < 0){
+		if(errno == EINTR)
+			r = write(FS(c)->fd, va, n);
+		if(r < 0)
+			oserror();
+	}
 	return r;
 }
 
@@ -655,7 +667,7 @@ fsqid(struct stat *st)
 
 	dev = (u16int)st->st_dev;
 	if(dev & 0x8000){
-		static int aware = 1;
+		static int aware;
 		if(aware==0){
 			aware = 1;
 			fprint(2, "fs: fsqid: top-bit dev: %#4.4ux\n", dev);
@@ -887,15 +899,29 @@ setid(char *name, int owner)
 	qlock(&idl);
 	u = name2user(uidmap, name, newuname);
 	if(u == nil){
-		qunlock(&idl);
 		up->env->uid = -1;
 		up->env->gid = -1;
-		return;
+	} else {
+		up->env->uid = u->id;
+		up->env->gid = u->gid;
 	}
-
-	up->env->uid = u->id;
-	up->env->gid = u->gid;
 	qunlock(&idl);
+
+#ifdef IOS_ARM64
+	/*
+	 * INFR-174: getpwuid/getpwnam fail in the iOS sandbox, so eve="inferno"
+	 * never resolves and the hostowner uid lands as -1 (or a synthetic id) —
+	 * never the real process uid that owns the files devfs-posix creates.
+	 * The Inferno permission check (FS(c)->uid == up->env->uid) then treats
+	 * every app-created file as "other", so 0700/0755 runtime dirs become
+	 * unwritable (e.g. Veltro's /usr/inferno/veltro/sessions → chat-history
+	 * save fails; the bundle-copied tree only works because it's chmod'd
+	 * 0777). iOS is single-user; pin the hostowner to the process uid that
+	 * actually owns everything we create so the owner bits apply.
+	 */
+	up->env->uid = getuid();
+	up->env->gid = getgid();
+#endif
 }
 
 static User**

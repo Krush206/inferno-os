@@ -33,9 +33,7 @@ enum
 
 #define	NHASH		(1<<5)
 #define	HASHMASK	(NHASH-1)
-#ifndef PLAN9
 #define	IOUNIT	(64*1024)
-#endif
 
 typedef struct Client Client;
 typedef struct Draw Draw;
@@ -1021,8 +1019,6 @@ drawclose(Chan *c)
 long
 drawread(Chan *c, void *a, long n, vlong off)
 {
-	int index, m;
-	ulong red, green, blue;
 	Client *cl;
 	uchar *p;
 	Refresh *r;
@@ -1030,6 +1026,10 @@ drawread(Chan *c, void *a, long n, vlong off)
 	Memimage *i;
 	ulong offset = off;
 	char buf[16];
+#ifdef COLORMAP
+	int index, m;
+	ulong red, green, blue;
+#endif
 
 	USED(offset);
 	if(c->qid.type & QTDIR)
@@ -1143,10 +1143,12 @@ drawwakeall(void)
 static long
 drawwrite(Chan *c, void *a, long n, vlong off)
 {
-	char buf[128], *fields[4], *q;
 	Client *cl;
-	int i, m, red, green, blue, x;
 	ulong offset = off;
+#ifdef COLORMAP
+	char buf[128], *fields[4], *q;
+	int i, m, red, green, blue, x;
+#endif
 
 	USED(offset);
 	if(c->qid.type & QTDIR)
@@ -1245,51 +1247,9 @@ drawcoord(uchar *p, uchar *maxp, int oldx, int *newx)
 static void
 printmesg(char *fmt, uchar *a, int plsprnt)
 {
-	char buf[256];
-	char *p, *q;
-	int s;
-
-	if(1|| plsprnt==0){
-		SET(s); SET(q); SET(p);
-		USED(fmt); USED(a); USED(buf); USED(p); USED(q); USED(s);
-		return;
-	}
-	q = buf;
-	*q++ = *a++;
-	for(p=fmt; *p; p++){
-		switch(*p){
-		case 'l':
-			q += sprint(q, " %ld", (long)BGLONG(a));
-			a += 4;
-			break;
-		case 'L':
-			q += sprint(q, " %.8lux", (ulong)BGLONG(a));
-			a += 4;
-			break;
-		case 'R':
-			q += sprint(q, " [%d %d %d %d]", BGLONG(a), BGLONG(a+4), BGLONG(a+8), BGLONG(a+12));
-			a += 16;
-			break;
-		case 'P':
-			q += sprint(q, " [%d %d]", BGLONG(a), BGLONG(a+4));
-			a += 8;
-			break;
-		case 'b':
-			q += sprint(q, " %d", *a++);
-			break;
-		case 's':
-			q += sprint(q, " %d", BGSHORT(a));
-			a += 2;
-			break;
-		case 'S':
-			q += sprint(q, " %.4ux", BGSHORT(a));
-			a += 2;
-			break;
-		}
-	}
-	*q++ = '\n';
-	*q = 0;
-	iprint("%.*s", (int)(q-buf), buf);
+	USED(plsprnt);
+	USED(fmt);
+	USED(a);
 }
 
 void
@@ -1439,6 +1399,7 @@ drawmesg(Client *client, void *av, int n)
 
 		/* draw: 'd' dstid[4] srcid[4] maskid[4] R[4*4] P[2*4] P[2*4] */
 		case 'd':
+			{
 			printmesg(fmt="LLLRPP", a, 0);
 			m = 1+4+4+4+4*4+2*4+2*4;
 			if(n < m)
@@ -1453,6 +1414,7 @@ drawmesg(Client *client, void *av, int n)
 			memdraw(dst, r, src, p, mask, q, op);
 			dstflush(dst, r);
 			continue;
+			}
 
 		/* toggle debugging: 'D' val[1] */
 		case 'D':

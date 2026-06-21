@@ -38,18 +38,19 @@ Ptrqueue: adt {
 	flush:		fn(q: self ref Ptrqueue);
 };
 
-init(): 	(chan of (string, chan of (string, ref Wmcontext)),
+init(name: string): 	(chan of (string, chan of (string, ref Wmcontext)),
 		chan of (ref Client, chan of string),
 		chan of (ref Client, array of byte, Sys->Rwrite))
 {
 	sys = load Sys Sys->PATH;
 	draw = load Draw Draw->PATH;
 
-	sys->bind("#s", "/chan", Sys->MBEFORE);
-
-	ctlio := sys->file2chan("/chan", "wmctl");
+	if(name == nil || name == "")
+		name = "wmctl";
+	r := sys->bind("#s", "/chan", Sys->MBEFORE);
+	ctlio := sys->file2chan("/chan", name);
 	if(ctlio == nil){
-		sys->werrstr(sys->sprint("can't create /chan/wmctl: %r"));
+		sys->werrstr(sys->sprint("can't create /chan/%s: %r", name));
 		return (nil, nil, nil);
 	}
 
@@ -67,7 +68,8 @@ wm(ctlio: ref Sys->FileIO,
 {
 	clients: array of ref Client;
 
-	for(;;)alt{
+	for(;;){
+		alt{
 	(cmd, rc) := <-wmreq =>
 		token := int cmd;
 		for(i := 0; i < len clients; i++)
@@ -98,7 +100,10 @@ wm(ctlio: ref Sys->FileIO,
 		c := findfid(clients, fid);
 		if(c == nil){
 			c = ref Client(
-				chan of int,
+				chan[32] of int,	# kbd: buffered so the compositor's
+							# non-blocking send doesn't drop keys
+							# while a -c0 app is mid-redraw (text
+							# input to workspace apps, e.g. settings)
 				chan of ref Draw->Pointer,
 				chan of string,
 				nil,
@@ -134,7 +139,8 @@ wm(ctlio: ref Sys->FileIO,
 			req <-= (c, nil, nil);
 			delclient(clients, c);
 		}
-	}
+		}  # end alt
+	}  # end for
 }
 
 # buffer all events between a window manager and
@@ -412,11 +418,15 @@ Client.top(c: self ref Client)
 
 Client.bottom(c: self ref Client)
 {
-	if(c.znext == nil)
-		return;
+	# Always move the screen image to z-back, regardless of z-list state.
+	# The original early return (c.znext == nil) skipped screen.bottom() for
+	# single-element lists or clients not yet in the list — causing ghost windows
+	# to remain visible when the app was the only entry in the z-list.
 	imgs := clientimages(c);
 	if(len imgs > 0)
 		imgs[0].screen.bottom(imgs);
+	if(c.znext == nil)
+		return;		# already at tail of z-list; no list reordering needed
 	prev: ref Client;
 	for(z := zorder; z != nil; (prev, z) = (z, z.znext))
 		if(z == c)

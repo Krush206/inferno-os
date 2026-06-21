@@ -4,46 +4,8 @@ include "common.m";
 include "transport.m";
 include "date.m";
 
-#D: Date;
-# sslhs: SSLHS;
-ssl3: SSL3;
-Context: import ssl3;
-# Inferno supported cipher suites:
-ssl_suites := array [] of {
-	byte 0, byte 16r03,	# RSA_EXPORT_WITH_RC4_40_MD5
-	byte 0, byte 16r04,	# RSA_WITH_RC4_128_MD5
-	byte 0, byte 16r05,	# RSA_WITH_RC4_128_SHA
-	byte 0, byte 16r06,	# RSA_EXPORT_WITH_RC2_CBC_40_MD5
-	byte 0, byte 16r07,	# RSA_WITH_IDEA_CBC_SHA
-	byte 0, byte 16r08,	# RSA_EXPORT_WITH_DES40_CBC_SHA
-	byte 0, byte 16r09,	# RSA_WITH_DES_CBC_SHA
-	byte 0, byte 16r0A,	# RSA_WITH_3DES_EDE_CBC_SHA
-	
-	byte 0, byte 16r0B,	# DH_DSS_EXPORT_WITH_DES40_CBC_SHA
-	byte 0, byte 16r0C,	# DH_DSS_WITH_DES_CBC_SHA
-	byte 0, byte 16r0D,	# DH_DSS_WITH_3DES_EDE_CBC_SHA
-	byte 0, byte 16r0E,	# DH_RSA_EXPORT_WITH_DES40_CBC_SHA
-	byte 0, byte 16r0F,	# DH_RSA_WITH_DES_CBC_SHA
-	byte 0, byte 16r10,	# DH_RSA_WITH_3DES_EDE_CBC_SHA
-	byte 0, byte 16r11,	# DHE_DSS_EXPORT_WITH_DES40_CBC_SHA
-	byte 0, byte 16r12,	# DHE_DSS_WITH_DES_CBC_SHA
-	byte 0, byte 16r13,	# DHE_DSS_WITH_3DES_EDE_CBC_SHA
-	byte 0, byte 16r14,	# DHE_RSA_EXPORT_WITH_DES40_CBC_SHA
-	byte 0, byte 16r15,	# DHE_RSA_WITH_DES_CBC_SHA
-	byte 0, byte 16r16,	# DHE_RSA_WITH_3DES_EDE_CBC_SHA
-	
-	byte 0, byte 16r17,	# DH_anon_EXPORT_WITH_RC4_40_MD5
-	byte 0, byte 16r18,	# DH_anon_WITH_RC4_128_MD5
-	byte 0, byte 16r19,	# DH_anon_EXPORT_WITH_DES40_CBC_SHA
-	byte 0, byte 16r1A,	# DH_anon_WITH_DES_CBC_SHA
-	byte 0, byte 16r1B,	# DH_anon_WITH_3DES_EDE_CBC_SHA
-	
-	byte 0, byte 16r1C,	# FORTEZZA_KEA_WITH_NULL_SHA
-	byte 0, byte 16r1D,	# FORTEZZA_KEA_WITH_FORTEZZA_CBC_SHA
-	byte 0, byte 16r1E,	# FORTEZZA_KEA_WITH_RC4_128_SHA
-};
-
-ssl_comprs := array [] of {byte 0};
+tls: TLS;
+Conn: import tls;
 
 # local copies from CU
 sys: Sys;
@@ -52,7 +14,6 @@ U: Url;
 S: String;
 C: Ctype;
 T: StringIntTab;
-DI: Dial;
 CU: CharonUtils;
 	Netconn, ByteSource, Header, config, Nameval : import CU;
 
@@ -118,7 +79,7 @@ hdrnames := array[] of {
 	"Max-Forwards",
 	"Proxy-Authorization",
 	"Range",
-	"Refererer",
+	"Referer",
 	"User-Agent",
 	"Cookie",
 	"Accept-Ranges",
@@ -230,8 +191,8 @@ HTTP_Header: adt {
 	cookies: list of string;
 
 	new: fn() : ref HTTP_Header;
- 	read: fn(h: self ref HTTP_Header, fd: ref sys->FD, sslx: ref SSL3->Context, buf: array of byte) : (string, int, int);
- 	write: fn(h: self ref HTTP_Header, fd: ref sys->FD, sslx: ref SSL3->Context) : int;
+ 	read: fn(h: self ref HTTP_Header, fd: ref sys->FD, tlsconn: ref TLS->Conn, buf: array of byte) : (string, int, int);
+ 	write: fn(h: self ref HTTP_Header, fd: ref sys->FD, tlsconn: ref TLS->Conn) : int;
 	usessl: fn(h: self ref HTTP_Header);
 	addval: fn(h: self ref HTTP_Header, key: int, val: string);
 	getval: fn(h: self ref HTTP_Header, key: int) : string;
@@ -252,16 +213,10 @@ init(cu: CharonUtils)
 	U = load Url Url->PATH; 
 	if (U != nil)
 		U->init();
-	DI = cu->DI;
 	C = cu->C;
 	T = load StringIntTab StringIntTab->PATH;
-#	D = load Date CU->loadpath(Date->PATH);
-#	if (D == nil)
-#		CU->raise(sys->sprint("EXInternal: can't load Date: %r"));
-#	D->init(cu);
 	ctype = C->ctype;
-	# sslhs = nil;	# load on demand
-	ssl3 = nil; # load on demand
+	tls = nil;	# load on demand
 	mediatable = CU->makestrinttab(CU->mnames);
 	agent = (CU->config).agentname;
 	dbg = int (CU->config).dbg['n'];
@@ -282,12 +237,14 @@ connect(nc: ref Netconn, bs: ref ByteSource)
 		if(config.httpproxy.port != "")
 			dialport = config.httpproxy.port;
 	}
-	addr := DI->netmkaddr(dialhost, "net", dialport);
+	addr := "tcp!" + dialhost + "!" + dialport;
 	err := "";
 	if(dbg)
 		sys->print("http %d: dialing %s\n", nc.id, addr);
-	nc.conn = DI->dial(addr, nil);
-	if(nc.conn == nil) {
+	ct0 := sys->millisec();
+	rv: int;
+	(rv, nc.conn) = sys->dial(addr, nil);
+	if(rv < 0) {
 		syserr := sys->sprint("%r");
 		if(S->prefix("cs: dialup", syserr))
 			err = syserr[4:];
@@ -297,47 +254,32 @@ connect(nc: ref Netconn, bs: ref ByteSource)
 			err = sys->sprint("couldn't connect: %s", syserr);
 	}
 	else {
+		sys->print("PERF: tcp connect %s = %dms\n", addr, sys->millisec()-ct0);
 		if(dbg)
 			sys->print("http %d: connected\n", nc.id);
 		if(nc.tstate&TSSL) {
-			#if(sslhs == nil) {
-			#	sslhs = load SSLHS SSLHS->PATH;
-			#	if(sslhs == nil)
-			#		err = sys->sprint("can't load SSLHS: %r");
-			#	else
-			#		sslhs->init(2);
-			#}
-			#if(err == "")
-			#	(err, nc.conn) = sslhs->client(nc.conn.dfd, addr);
-			if(nc.tstate&TProxy) # tunelling SSL through proxy
+			if(nc.tstate&TProxy) # tunnelling SSL through proxy
 				err = tunnel_ssl(nc);
-	 		vers := 0;
- 			if(err == "") {
-				if(ssl3 == nil) {
-	 				m := load SSL3 SSL3->PATH;
- 					if(m == nil)
- 						err = "can't load SSL3 module";
+			if(err == "") {
+				if(tls == nil) {
+					m := load TLS TLS->PATH;
+					if(m == nil)
+						err = "can't load TLS module";
 					else if((err = m->init()) == nil)
-						ssl3 = m;
+						tls = m;
 				}
 				if(config.usessl == CU->NOSSL)
 					err = "ssl is configured off";
-				else if((config.usessl & CU->SSLV23) == CU->SSLV23)
-					vers = 23;
-	 			else if(config.usessl & CU->SSLV2)
-					vers = 2;
-	 			else if(config.usessl & CU->SSLV3)
-					vers = 3;
 			}
- 			if(err == "") {
- 				nc.sslx = ssl3->Context.new();
- 				if(config.devssl)
- 					nc.sslx.use_devssl();
- 				info := ref SSL3->Authinfo(ssl_suites, ssl_comprs, nil, 
- 						0, nil, nil, nil);
-vers = 3;
- 				(err, nc.vers) =  nc.sslx.client(nc.conn.dfd, addr, vers, info);
- 			}
+			if(err == "") {
+				cfg := tls->defaultconfig();
+				cfg.servername = nc.host;
+				if(config.devssl)
+					cfg.insecure = 1;
+				tls_t := sys->millisec();
+				(nc.tlsconn, err) = tls->client(nc.conn.dfd, cfg);
+				sys->print("PERF: tls->client %s = %dms err=%s\n", nc.host, sys->millisec()-tls_t, err);
+			}
 		}
 	}
 	if(err == "") {
@@ -348,54 +290,39 @@ vers = 3;
 		if(dbg)
 			sys->print("http %d: connection failed: %s\n", nc.id, err);
 		bs.err = err;
-#constate("connect", nc.conn);
 		closeconn(nc);
 	}
-}
-
-constate(msg: string, conn: ref Dial->Connection)
-{
-	fd := conn.dfd;
-	fdfd := -1;
-	if (fd != nil)
-		fdfd = fd.fd;
-	sys->print("connstate(%s, %d) ", msg, fdfd);
-	sfd := sys->open(conn.dir + "/status", Sys->OREAD);
-	if (sfd == nil) {
-		sys->print("cannot open %s/status: %r\n", conn.dir);
-		return;
-	}
-	buf := array [1024] of byte;
-	n := sys->read(sfd, buf, len buf);
-	s := sys->sprint("error: %r");
-	if (n > 0)
-		s = string buf[:n];
-	sys->print("%s status: %s\n", conn.dir, s);
 }
 
 tunnel_ssl(nc: ref Netconn) : string
 {
 	httpvers: string;
-	if(nc.state&THTTP_1_0)
+	if(nc.tstate&THTTP_1_0)
 		httpvers = "1.0";
 	else
 		httpvers = "1.1";
-	req := "CONNECT " + nc.host + ":" + string nc.port + " HTTP/" + httpvers;
- 	n := sys->fprint(nc.conn.dfd, "%s\r\n\r\n", req);
+	target := nc.host + ":" + string nc.port;
+	n := sys->fprint(nc.conn.dfd, "CONNECT %s HTTP/%s\r\nHost: %s\r\n\r\n",
+		target, httpvers, target);
 	if(n < 0)
 		return sys->sprint("proxy: %r");
 	buf := array [Sys->ATOMICIO] of byte;
 	n = sys->read(nc.conn.dfd, buf, Sys->ATOMICIO);
 	if(n < 0)
-		return sys->sprint("proxy: %r");;
+		return sys->sprint("proxy: %r");
+	if(n == 0)
+		return "proxy: connection closed";
 	resp := string buf[0:n];
 	(m, s) := sys->tokenize(resp, " ");
 
 	if(m < 2)
-		return "proxy: " + resp;
-	if(hd tl s != "200"){
+		return "proxy: unexpected response: " + resp;
+	code := hd tl s;
+	if(code != "200"){
 		(nil, e) := sys->tokenize(resp, "\n\r");
-		return hd e;
+		if(e != nil)
+			return "proxy: " + hd e;
+		return "proxy: connection failed (code " + code + ")";
 	}
 	return "";
 }
@@ -415,6 +342,10 @@ need_proxy(h: string) : int
 
 writereq(nc: ref Netconn, bs: ref ByteSource)
 {
+	# Reset chunked state for new request on persistent connection
+	nc.chunked = 0;
+	nc.chunkrem = 0;
+	nc.chunkeof = 0;
 	#
 	# Prepare the request
 	#
@@ -443,13 +374,11 @@ writereq(nc: ref Netconn, bs: ref ByteSource)
 	else
 		reqhdr.addval(HHost, u.host);
 	reqhdr.addval(HUserAgent, agent);
-	reqhdr.addval(HAccept, "*/*; *");
-#	if(cr != nil && (cr.status == CRRevalidate || cr.status == CRMustRevalidate)) {
-#		if(cr.etag != "")
-#			reqhdr.addval(HIfNoneMatch, cr.etag);
-#		else
-#			reqhdr.addval(HIfModifiedSince, D->dateconv(cr.notafter));
-#	}
+	reqhdr.addval(HAccept, "text/html, application/xhtml+xml, image/png, image/jpeg, image/gif, */*;q=0.1");
+	reqhdr.addval(HAcceptLanguage, "en-US,en;q=0.9");
+	reqhdr.addval(HAcceptEncoding, "identity");
+	if(!(nc.tstate&THTTP_1_0))
+		reqhdr.addval(HConnection, "keep-alive");
 	if(req.auth != "")
 		reqhdr.addval(HAuthorization, "Basic " + req.auth);
 	if(req.method == CU->HPost) {
@@ -469,18 +398,18 @@ writereq(nc: ref Netconn, bs: ref ByteSource)
 		sys->print("http %d: writing request:\n", nc.id);
 		reqhdr.write(sys->fildes(1), nil);
 	}
-	rv := reqhdr.write(nc.conn.dfd, nc.sslx);
+	rv := reqhdr.write(nc.conn.dfd, nc.tlsconn);
 	if(rv >= 0 && req.method == CU->HPost) {
 		if(dbg > 1)
 			sys->print("http %d: writing body:\n%s\n", nc.id, string req.body);
- 		if((nc.tstate&TSSL) && nc.sslx != nil)
- 			rv = nc.sslx.write(req.body, len req.body);
+		if((nc.tstate&TSSL) && nc.tlsconn != nil)
+			rv = nc.tlsconn.write(req.body, len req.body);
  		else
  			rv = sys->write(nc.conn.dfd, req.body, len req.body);
 	}
 	if(rv < 0) {
-		err = sys->sprint("error writing to host: %r");
-#constate("writereq", nc.conn);
+		err = "error writing to host";
+
 	}
 	if(err != "") {
 		if(dbg)
@@ -497,9 +426,9 @@ gethdr(nc: ref Netconn, bs: ref ByteSource)
  	if(nc.tstate&TSSL)
  		resph.usessl();
 	hbuf := array[8000] of byte;
- 	(err, i, j) := resph.read(nc.conn.dfd, nc.sslx, hbuf);
+	(err, i, j) := resph.read(nc.conn.dfd, nc.tlsconn, hbuf);
 	if(err != "") {
-#constate("gethdr", nc.conn);
+
 		if(!(nc.tstate&THTTP_1_0)) {
 			# try switching to http 1.0
 			if(dbg)
@@ -528,6 +457,14 @@ gethdr(nc: ref Netconn, bs: ref ByteSource)
 		else
 			nc.tbuf = nil;
 		bs.hdr = hdrconv(resph, bs.req.url);
+		# Detect chunked transfer-encoding
+		te := resph.getval(HTransferEncoding);
+		if(te != nil && S->prefix("chunked", S->tolower(te))) {
+			nc.chunked = 1;
+			nc.chunkrem = 0;
+			nc.chunkeof = 0;
+			bs.hdr.length = -1;	# unknown length
+		}
 		if(bs.hdr.length == 0 && (nc.tstate&THTTP_1_0))
 			closeconn(nc);
 	}
@@ -539,11 +476,139 @@ gethdr(nc: ref Netconn, bs: ref ByteSource)
 	}
 }
 
+# Read a single byte from connection (handles tbuf overread and TLS)
+readbyte(nc: ref Netconn) : int
+{
+	buf := array[1] of byte;
+	if(nc.tbuf != nil && len nc.tbuf > 0) {
+		buf[0] = nc.tbuf[0];
+		if(len nc.tbuf > 1)
+			nc.tbuf = nc.tbuf[1:];
+		else
+			nc.tbuf = nil;
+		return int buf[0];
+	}
+	n: int;
+	if((nc.tstate&TSSL) && nc.tlsconn != nil)
+		n = nc.tlsconn.read(buf, 1);
+	else
+		n = sys->read(nc.conn.dfd, buf, 1);
+	if(n <= 0)
+		return -1;
+	return int buf[0];
+}
+
+# Read raw bytes from connection (handles tbuf overread and TLS)
+readraw(nc: ref Netconn, buf: array of byte, n: int) : int
+{
+	if(nc.tbuf != nil && len nc.tbuf > 0) {
+		avail := len nc.tbuf;
+		if(n > avail)
+			n = avail;
+		for(k := 0; k < n; k++)
+			buf[k] = nc.tbuf[k];
+		if(n >= avail)
+			nc.tbuf = nil;
+		else
+			nc.tbuf = nc.tbuf[n:];
+		return n;
+	}
+	if((nc.tstate&TSSL) && nc.tlsconn != nil)
+		return nc.tlsconn.read(buf, n);
+	return sys->read(nc.conn.dfd, buf, n);
+}
+
+# Read chunk-decoded data for chunked transfer-encoding
+getchunkdata(nc: ref Netconn, bs: ref ByteSource) : int
+{
+	if(bs.data == nil || bs.edata >= len bs.data)
+		return 0;
+	if(nc.chunkeof)
+		return 0;
+
+	# If no data remaining in current chunk, read next chunk header
+	if(nc.chunkrem == 0) {
+		# Read chunk size line: hex-digits followed by CRLF
+		line := "";
+		for(;;) {
+			c := readbyte(nc);
+			if(c < 0)
+				return -1;
+			if(c == '\r')
+				continue;
+			if(c == '\n')
+				break;
+			# Ignore chunk extensions (;...)
+			if(c == ';') {
+				# Skip to end of line
+				for(;;) {
+					c = readbyte(nc);
+					if(c < 0)
+						return -1;
+					if(c == '\n')
+						break;
+				}
+				break;
+			}
+			line[len line] = c;
+		}
+		# Parse hex chunk size
+		size := 0;
+		for(k := 0; k < len line; k++) {
+			ch := line[k];
+			if(ch >= '0' && ch <= '9')
+				size = size * 16 + ch - '0';
+			else if(ch >= 'a' && ch <= 'f')
+				size = size * 16 + ch - 'a' + 10;
+			else if(ch >= 'A' && ch <= 'F')
+				size = size * 16 + ch - 'A' + 10;
+			else
+				break;
+		}
+		if(size == 0) {
+			nc.chunkeof = 1;
+			# Consume trailing headers + CRLF
+			for(;;) {
+				c := readbyte(nc);
+				if(c < 0 || c == '\n')
+					break;
+			}
+			return 0;
+		}
+		nc.chunkrem = size;
+	}
+
+	# Read data from current chunk
+	buf := bs.data[bs.edata:];
+	want := len buf;
+	if(want > nc.chunkrem)
+		want = nc.chunkrem;
+	n := readraw(nc, buf, want);
+	if(n <= 0) {
+		closeconn(nc);
+		if(n < 0)
+			bs.err = sys->sprint("%r");
+		return n;
+	}
+	nc.chunkrem -= n;
+
+	# Consume trailing CRLF after chunk data
+	if(nc.chunkrem == 0) {
+		c := readbyte(nc);
+		if(c == '\r')
+			c = readbyte(nc);
+		# c should be '\n'; ignore errors here
+	}
+	return n;
+}
+
 # returns number of bytes transferred to bs.data
 # 0 => EOF
 # -1 => error
 getdata(nc: ref Netconn, bs: ref ByteSource): int
 {
+	if(nc.chunked)
+		return getchunkdata(nc, bs);
 	if (bs.data == nil || bs.edata >= len bs.data) {
 		if(nc.tstate&THTTP_1_0) {
 			# hmm - when do non-eof'd HTTP1.1 connections close?
@@ -565,72 +630,20 @@ getdata(nc: ref Netconn, bs: ref ByteSource): int
 		nc.tbuf = nc.tbuf[n:];
 		return n;
 	}
-	if ((nc.tstate&TSSL) && nc.sslx != nil) 
-		n = nc.sslx.read(buf, n);
+	if ((nc.tstate&TSSL) && nc.tlsconn != nil) 
+		n = nc.tlsconn.read(buf, n);
 	else
 		n = sys->read(nc.conn.dfd, buf, n);
 	if(dbg > 1)
 		sys->print("http %d: read %d bytes\n", nc.id, n);
 	if (n <= 0) {
-#constate("getdata", nc.conn);
+
 		closeconn(nc);
 		if(n < 0)
 			bs.err = sys->sprint("%r");
 	}
-#else
-#sys->write(sys->fildes(1), buf[:n], n);
 	return n;
- }
-
-#getdata(nc: ref Netconn, bs: ref ByteSource)
-#{
-#	buf := bs.data;
-#	n := 0;
-#	if(nc.tbuf != nil) {
-#		# initial data from overread of header
-#		# Note: can have more data in nc.tbuf than was
-#		# reported by the HTTP header
-#		n = len nc.tbuf;
-#		if (n > bs.hdr.length) {
-#			n = bs.hdr.length;
-#			nc.tbuf = nc.tbuf[0:n];
-#		}
-#		if(len buf <= n) {
-#			if(warn && len buf < n)
-#				sys->print("more initial data than specified length\n");
-#			bs.data = nc.tbuf;
-#		}
-#		else
-#			buf[0:] = nc.tbuf[:n];
-#		nc.tbuf = nil;
-#	}
-#	if(n == 0) {
-# 		if((nc.tstate&TSSL) && nc.sslx != nil) 
-# 			n = nc.sslx.read(buf[bs.edata:], len buf - bs.edata);
-# 		else
-# 			n = sys->read(nc.conn.dfd, buf[bs.edata:], len buf - bs.edata);
-#	}
-#	if(dbg > 1)
-#		sys->print("http %d: read %d bytes\n", nc.id, n);
-#	if(n <= 0) {
-#		closeconn(nc);
-#		if(n < 0)
-#			bs.err = sys->sprint("%r");
-#	}
-#	else {
-#		bs.edata += n;
-#		if(bs.edata == len buf && bs.hdr.length != 100000000) {
-#			if(nc.tstate&THTTP_1_0) {
-#				closeconn(nc);
-#			}
-#		}
-#	}
-#	if(bs.err != "") {
-#		if(dbg)
-#			sys->print("http %d: error %s\n", nc.id, bs.err);
-#		closeconn(nc);
-#	}
-#}
+}
 
 hdrconv(hh: ref HTTP_Header, u: ref Parsedurl) : ref Header
 {
@@ -657,10 +670,10 @@ hdrconv(hh: ref HTTP_Header, u: ref Parsedurl) : ref Header
 	hdr.refresh = hh.getval(HRefresh);
 	hdr.chal = hh.getval(HWWWAuthenticate);
 	s = hh.getval(HContentEncoding);
-	if(s != "") {
+	if(s != "" && s != "identity") {
 		if(warn)
 			sys->print("warning: unhandled content encoding: %s\n", s);
-		# force "save as" dialog
+		# force "save as" dialog for encodings we can't decode
 		hdr.mtype = CU->UnknownType;
 	}
 	hdr.warn = hh.getval(HWarning);
@@ -774,15 +787,15 @@ HTTP_Header.getval(h: self ref HTTP_Header, key: int) : string
 # If bytes > 127 appear, assume Latin-1
 #
 # Header values added will always be trimmed (see trim() above).
-HTTP_Header.read(h: self ref HTTP_Header, fd: ref sys->FD, sslx: ref SSL3->Context, buf: array of byte) : (string, int, int)
+HTTP_Header.read(h: self ref HTTP_Header, fd: ref sys->FD, tlsconn: ref TLS->Conn, buf: array of byte) : (string, int, int)
 {
 	i := 0;
 	j := 0;
 	aline : array of byte = nil;
 	eof := 0;
- 	if(h.iossl && sslx != nil) {
- 		(aline, eof, i, j) = ssl_getline(sslx, buf, i, j);
- 	}
+	if(h.iossl && tlsconn != nil) {
+		(aline, eof, i, j) = ssl_getline(tlsconn, buf, i, j);
+	}
  	else {
  		(aline, eof, i, j) = CU->getline(fd, buf, i, j);
  	}
@@ -826,9 +839,9 @@ HTTP_Header.read(h: self ref HTTP_Header, fd: ref sys->FD, sslx: ref SSL3->Conte
 	
 	prevkey := -1;
 	while(len aline > 0) {
- 		if(h.iossl && sslx != nil) {
- 			(aline, eof, i, j) = ssl_getline(sslx, buf, i, j);
- 		}
+		if(h.iossl && tlsconn != nil) {
+			(aline, eof, i, j) = ssl_getline(tlsconn, buf, i, j);
+		}
  		else {
  			(aline, eof, i, j) = CU->getline(fd, buf, i, j);
  		}
@@ -871,7 +884,7 @@ HTTP_Header.read(h: self ref HTTP_Header, fd: ref sys->FD, sslx: ref SSL3->Conte
 
 # Write in big hunks.  Convert to Latin1.
 # Return last sys->write return value.
-HTTP_Header.write(h: self ref HTTP_Header, fd: ref sys->FD, sslx: ref SSL3->Context) : int
+HTTP_Header.write(h: self ref HTTP_Header, fd: ref sys->FD, tlsconn: ref TLS->Conn) : int
 {
 	# Expect almost all responses will fit in this sized buf
 	buf := array[sys->ATOMICIO] of byte;
@@ -904,9 +917,9 @@ HTTP_Header.write(h: self ref HTTP_Header, fd: ref sys->FD, sslx: ref SSL3->Cont
 	buf[i++] = byte '\n';
 	n := 0;
 	for(k := 0; k < i; ) {
- 		if(h.iossl && sslx != nil) {
- 			n = sslx.write(buf[k:], i-k);
- 		}
+		if(h.iossl && tlsconn != nil) {
+			n = tlsconn.write(buf[k:], i-k);
+		}
  		else {
  			n = sys->write(fd, buf[k:], i-k);
  		}
@@ -977,12 +990,14 @@ defaultport(scheme: string) : int
 
 closeconn(nc: ref Netconn)
 {
-	nc.conn = nil;
+	nc.conn.dfd = nil;
+	nc.conn.cfd = nil;
+	nc.conn.dir = "";
 	nc.connected = 0;
-	nc.sslx = nil;
+	nc.tlsconn = nil;
 }
 
-ssl_getline(sslx: ref SSL3->Context, buf: array of byte, bstart, bend: int)
+ssl_getline(tlsconn: ref TLS->Conn, buf: array of byte, bstart, bend: int)
 	:(array of byte, int, int, int)
 {
  	ans : array of byte = nil;
@@ -1004,7 +1019,7 @@ mainloop:
  			ans = append(ans, buf[bstart:bend]);
  		last = nil;
  		bstart = 0;
- 		bend = sslx.read(buf, len buf);
+ 		bend = tlsconn.read(buf, len buf);
  		if(bend <= 0) {
  			eof = 1;
  			bend = 0;

@@ -1363,20 +1363,11 @@ set_queue(ctx: ref Context, q: ref RecordQueue, mac, key: array of byte): string
 	SSL_NULL_CIPHER =>
 		q.cipherState = ref CipherState.null(1);
 	SSL_RC4 =>
-		if (SSL_DEBUG) log("rc4setup");
-		rcs := keyring->rc4setup(key);
-		q.cipherState = ref CipherState.rc4(1, rcs);
+		# RC4 is disabled - insecure cipher (biased output, practical attacks exist)
+		e = "ssl3: RC4 is disabled - insecure cipher";
 	SSL_DES_CBC =>
-		dcs : ref keyring->DESstate;
-
-		if (SSL_DEBUG) log(sys->sprint("dessetup %d", len key));
-		if (len key >= 16)
-			dcs = keyring->dessetup(key[0:8], key[8:16]);
-		else if (len key >= 8)
-			dcs = keyring->dessetup(key[0:8], nil);
-		else
-			e = "ssl3: bad DES key length";
-		q.cipherState = ref CipherState.descbc(8, dcs);
+		# DES is disabled - insecure cipher (56-bit key is trivially brute-forced)
+		e = "ssl3: DES is disabled - insecure cipher";
 	SSL_IDEA_CBC =>
 		ics : ref keyring->IDEAstate;
 
@@ -1424,10 +1415,10 @@ set_cipher_algs(ctx: ref Context) : string
 	case enc := ctx.sel_ciph.bulk_cipher_algorithm {
 	SSL_NULL_CIPHER =>
 		algspec += " clear";
-	SSL_RC4 => 	# stream cipher
-		algspec += " rc4_128";
-	SSL_DES_CBC => # block cipher
-		algspec += " descbc";
+	SSL_RC4 => 	# RC4 disabled - insecure cipher
+		e = "ssl3: RC4 is disabled - insecure cipher";
+	SSL_DES_CBC => # DES disabled - insecure cipher
+		e = "ssl3: DES is disabled - insecure cipher";
 	SSL_IDEA_CBC => # block cipher
 		algspec += " ideacbc";
 	SSL_RC2_CBC or
@@ -2344,9 +2335,14 @@ do_server_cert(hm: ref Handshake.Certificate, ctx: ref Context)
 		cl = tl cl;
 	}
 
-	# TODO: verify certificate chain
-	#	check if in the acceptable dnlist
-	# ctx.sel_keyx.peer_pk = x509->verify_chain(ctx.session.peer_certs);
+	# verify certificate chain
+	(vok, verr) := x509->verify_certchain(ctx.session.peer_certs);
+	if(vok == 0) {
+		if(SSL_DEBUG)
+			log("ssl3: certificate chain verification failed: " + verr);
+		fatal(SSL_HANDSHAKE_FAILURE, "certificate chain verification failed: " + verr, ctx);
+		return;
+	}
 	if(SSL_DEBUG)
 		log("ssl3: number certificates got: " + string len ctx.session.peer_certs);
 	peer_cert := hd ctx.session.peer_certs;
@@ -2654,13 +2650,17 @@ do_client_keyex(hm: ref Handshake.ClientKeyExchange, ctx: ref Context)
 do_client_cert(hm: ref Handshake.Certificate, ctx: ref Context)
 {
 	ctx.session.peer_certs = hm.cert_list;
-	
-	# verify cert chain and determine the type of cert
-	# ctx.peer_info.sk = x509->verify_chain(ctx.session.peer_certs);
-	# if(ctx.peer_info.key == nil) {
-	#	fatal(SSL_HANDSHAKE_FAILURE, "client certificate: cert verify failed", ctx);
-	#	return;
-	# }
+
+	# verify cert chain
+	if(ctx.session.peer_certs != nil) {
+		(vok, verr) := x509->verify_certchain(ctx.session.peer_certs);
+		if(vok == 0) {
+			if(SSL_DEBUG)
+				log("ssl3: client certificate chain verification failed: " + verr);
+			fatal(SSL_HANDSHAKE_FAILURE, "client certificate: chain verify failed: " + verr, ctx);
+			return;
+		}
+	}
 
 	ctx.status |= CERT_RECEIVED;
 
@@ -3871,6 +3871,50 @@ Alert.tostring(alert: self ref Alert): string
 	return info;
 }
 
+# is_weak_suite returns 1 if the cipher suite (2 bytes) uses
+# NULL, RC4, DES, export-grade, or anonymous key exchange ciphers.
+# These are rejected during negotiation to prevent downgrade attacks.
+is_weak_suite(cs: array of byte): int
+{
+	if(cs[0] != byte 0)
+		return 0;	# non-standard suite, allow negotiation to handle it
+	id := int cs[1];
+	case id {
+	NULL_WITH_NULL_NULL or
+	RSA_WITH_NULL_MD5 or
+	RSA_WITH_NULL_SHA or
+	FORTEZZA_KEA_WITH_NULL_SHA =>
+		return 1;	# NULL cipher
+	RSA_EXPORT_WITH_RC4_40_MD5 or
+	RSA_WITH_RC4_128_MD5 or
+	RSA_WITH_RC4_128_SHA or
+	DH_anon_EXPORT_WITH_RC4_40_MD5 or
+	DH_anon_WITH_RC4_128_MD5 or
+	FORTEZZA_KEA_WITH_RC4_128_SHA =>
+		return 1;	# RC4
+	RSA_EXPORT_WITH_DES40_CBC_SHA or
+	RSA_WITH_DES_CBC_SHA or
+	DH_DSS_EXPORT_WITH_DES40_CBC_SHA or
+	DH_DSS_WITH_DES_CBC_SHA or
+	DH_RSA_EXPORT_WITH_DES40_CBC_SHA or
+	DH_RSA_WITH_DES_CBC_SHA or
+	DHE_DSS_EXPORT_WITH_DES40_CBC_SHA or
+	DHE_DSS_WITH_DES_CBC_SHA or
+	DHE_RSA_EXPORT_WITH_DES40_CBC_SHA or
+	DHE_RSA_WITH_DES_CBC_SHA or
+	DH_anon_EXPORT_WITH_DES40_CBC_SHA or
+	DH_anon_WITH_DES_CBC_SHA =>
+		return 1;	# DES / export
+	RSA_EXPORT_WITH_RC2_CBC_40_MD5 =>
+		return 1;	# export RC2
+	DH_anon_WITH_3DES_EDE_CBC_SHA =>
+		return 1;	# anonymous (no authentication)
+	FORTEZZA_KEA_WITH_FORTEZZA_CBC_SHA =>
+		return 1;	# unsupported
+	}
+	return 0;
+}
+
 find_cipher_suite(s, suites: array of byte) : array of byte
 {
 	i, j : int;
@@ -3887,10 +3931,12 @@ find_cipher_suite(s, suites: array of byte) : array of byte
 	for(i = 0; i < n; ) {
 		a = s[i:i+2];
 		i += 2;
+		if(is_weak_suite(a))
+			continue;	# skip weak suites during negotiation
 		for(j = 0; j < m; ) {
 			b = suites[j:j+2];
 			j += 2;
-			if(a[0] == b[0] && a[1] == b[1]) 
+			if(a[0] == b[0] && a[1] == b[1])
 				return b;
 		}
 	}

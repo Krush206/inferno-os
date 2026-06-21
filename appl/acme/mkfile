@@ -1,4 +1,4 @@
-<../../mkconfig
+<$ROOT/mkconfig
 
 DIRS=\
 	acme\
@@ -64,6 +64,7 @@ SYSMODULES=\
 	daytime.m\
 	debug.m\
 	draw.m\
+	plumbmsg.m\
 	sh.m\
 	string.m\
 	styx.m\
@@ -84,7 +85,7 @@ install:V:	$ROOT/dis/acme.dis
 $ROOT/dis/acme.dis:	acme.dis
 	rm -f $target && cp acme.dis $target
 
-acme.dis:	$MODULES $SYS_MODULES
+acme.dis:	$MODULES $SYS_MODULE
 
 nuke:V:
 	rm -f $ROOT/dis/acme.dis

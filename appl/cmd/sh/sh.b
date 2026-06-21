@@ -94,7 +94,7 @@ OMASK: con 7;
 
 badmodule(path: string)
 {
-	sys->fprint(sys->fildes(2), "sh: cannot load %s: %r\n", path);
+	sys->fprint(sys->fildes(2), "sh: badmodule() cannot load %s: %r\n", path);
 	raise "fail:bad module" ;
 }
 
@@ -782,6 +782,7 @@ pathexpand(ctxt: ref Context, progname: string): string
 runexternal(ctxt: ref Context, args: list of ref Listnode, last: int): string
 {
 	progname := (hd args).word;
+	if (DEBUG) debug(sys->sprint("runexternal progname %s", progname));
 	disfile := 0;
 	if (len progname >= 4 && progname[len progname-4:] == ".dis")
 		disfile = 1;
@@ -801,18 +802,24 @@ runexternal(ctxt: ref Context, args: list of ref Listnode, last: int): string
 		else
 			path = progname;
 
+		if (DEBUG) debug(sys->sprint("runexternal path %s", path));
 		npath := path;
 		if (!disfile)
 			npath += ".dis";
+		if (DEBUG) debug(sys->sprint("runexternal npath %s", npath));
 		mod := load Command npath;
 		if (mod != nil) {
+			if (DEBUG) debug(sys->sprint("runexternal npath %s mod != nil\n", npath));
 			argv := list2stringlist(args);
 			export(ctxt.env.localenv);
 
+			if (DEBUG) debug(sys->sprint("runexternal mod != nil"));
 			if (last) {
 				{
 					sys->pctl(Sys->NEWFD, ctxt.keepfds);
+					if (DEBUG) debug(sys->sprint("runexternal before mod->init"));
 					mod->init(ctxt.drawcontext, argv);
+					if (DEBUG) debug(sys->sprint("runexternal after mod->init"));
 					exit;
 				} exception e {
 				EPIPE =>
@@ -827,6 +834,7 @@ runexternal(ctxt: ref Context, args: list of ref Listnode, last: int): string
 			if (DEBUG) debug("started external externalexec; pid is "+string pid);
 			return waitfor(ctxt, pid :: nil);
 		}
+		if (DEBUG) debug(sys->sprint("runexternal npath %s mod == nil", npath));
 		err = sys->sprint("%r");
 		if (nonexistent(err)) {
 			# try and run it as a shell script
@@ -943,10 +951,10 @@ externalexec(mod: Command,
 	startchan <-= sys->pctl(0, nil);
 	{
 		mod->init(drawcontext, argv);
-	}
-	exception {
+	}exception e{
 	EPIPE =>
 		raise "fail:" + EPIPE;
+	* => raise e; # TODO the manual says that leaving this out is intentional. Not sure how man pages work without this
 	}
 }
 
@@ -1521,26 +1529,23 @@ envstringtoval(v: string): list of ref Listnode
 	return stringlist2list(str->unquoted(v));
 }
 
-XXXenvstringtoval(v: string): list of ref Listnode
-{
-	if (len v == 0)
-		return nil;
-	start := len v;
-	val: list of ref Listnode;
-	for (i := start - 1; i >= 0; i--) {
-		if (v[i] == ENVSEP) {
-			val = ref Listnode(nil, v[i+1:start]) :: val;
-			start = i;
-		}
-	}
-	return ref Listnode(nil, v[0:start]) :: val;
-}
-
+# the correct way to set environment variables is to
+# be able to catch errors if there is a failure.
+# this is not happening and is propogating to a triple fault.
+# the shell should run this in an exception handler
+# When value is nil, setenv() tries to remove the
+# env file. If the file does not already exist,
+# that raises an unhandled exception which is causing a triple
+# fault
 setenv(name: string, val: list of ref Listnode)
 {
 	if (env == nil)
 		return;
-	env->setenv(name, quoted(val, 1));
+	valstr := quoted(val, 1);
+	if(valstr == nil && getenv(name) == nil){
+		return;
+	}
+	env->setenv(name, valstr);
 }
 
 

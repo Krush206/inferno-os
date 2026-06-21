@@ -53,7 +53,17 @@ objIdTab = array [] of {
 	id_pkcs_challengePassword =>	Oid(array [] of {1,2,840,113549,1,9,7}),
 	id_pkcs_unstructuredAddress =>	Oid(array [] of {1,2,840,113549,1,9,8}),
 	id_pkcs_extCertAttrs =>		Oid(array [] of {1,2,840,113549,1,9,9}),
-	id_algorithm_shaWithDSS =>	Oid(array [] of {1,3,14,3,2,13})
+	id_algorithm_shaWithDSS =>	Oid(array [] of {1,3,14,3,2,13}),
+	id_ec_publicKey =>		Oid(array [] of {1,2,840,10045,2,1}),
+	id_ecdsa_sha256 =>		Oid(array [] of {1,2,840,10045,4,3,2}),
+	id_ecdsa_sha384 =>		Oid(array [] of {1,2,840,10045,4,3,3}),
+	id_prime256v1 =>		Oid(array [] of {1,2,840,10045,3,1,7}),
+	id_sha256WithRSAEncryption =>	Oid(array [] of {1,2,840,113549,1,1,11}),
+	id_sha384WithRSAEncryption =>	Oid(array [] of {1,2,840,113549,1,1,12}),
+	id_mldsa65 =>			Oid(array [] of {2,16,840,1,101,3,4,3,18}),
+	id_mldsa87 =>			Oid(array [] of {2,16,840,1,101,3,4,3,19}),
+	id_slhdsa192s =>		Oid(array [] of {2,16,840,1,101,3,4,3,22}),
+	id_slhdsa256s =>		Oid(array [] of {2,16,840,1,101,3,4,3,26})
 };
 
 # [public]
@@ -285,11 +295,14 @@ parse:
 
 
 # [public]
-# generate a pair of DSS public and private keys
+# DEPRECATED: DSA key generation is not implemented and DSA is
+# deprecated by NIST (FIPS 186-5, 2023).  Use Ed25519 or ECDSA
+# via the Keyring module instead.  This stub is retained only for
+# interface compatibility.
 
 generateDSSKeyPair(strength: int): (ref DSSPublicKey, ref DSSPrivateKey)
 {
-	# TODO: need add getRandBetween in IPint
+	sys->fprint(sys->fildes(2), "pkcs: generateDSSKeyPair is deprecated and not implemented; use Ed25519\n");
 	return (nil, nil);
 }
 

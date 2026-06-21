@@ -2,6 +2,9 @@
 #include "fns.h"
 #include "interp.h"
 #include "error.h"
+#ifndef _WIN32
+#include "sys/mman.h"
+#endif
 
 enum
 {
@@ -48,9 +51,10 @@ struct
 } table = {
 	3,
 	{
-		{ "main",  0, 	32*1024*1024, 31,  512*1024, 0, 31*1024*1024 },
-		{ "heap",  1, 	32*1024*1024, 31,  512*1024, 0, 31*1024*1024 },
-		{ "image", 2,   64*1024*1024+256, 31, 4*1024*1024, 1, 63*1024*1024 },
+		/* quanta must be 127 for 64-bit (5 pointers + allocpc/reallocpc = 64 bytes min) */
+		{ "main",  0, 	512*1024*1024, 127,  512*1024, 0, 511*1024*1024 },
+		{ "heap",  1, 	512*1024*1024, 127,  512*1024, 0, 511*1024*1024 },
+		{ "image", 2,   256*1024*1024+256, 127, 4*1024*1024, 1, 255*1024*1024 },
 	}
 };
 
@@ -95,8 +99,7 @@ int
 memusehigh(void)
 {
 	return 	mainmem->cursize > mainmem->ressize ||
-			heapmem->cursize > heapmem->ressize ||
-			0 && imagmem->cursize > imagmem->ressize;
+			heapmem->cursize > heapmem->ressize;
 }
 
 int
@@ -373,8 +376,18 @@ dopoolalloc(Pool *p, ulong asize, ulong pc)
 	}
 
 	p->nbrk++;
+#ifdef _WIN32
+	/* Windows: os.c provides sbrk() via VirtualAlloc */
 	t = (Bhdr *)sbrk(alloc);
 	if(t == (void*)-1) {
+#elif defined(__APPLE__)
+	/* macOS ARM64 hardened runtime doesn't allow PROT_EXEC without entitlements */
+	t = (Bhdr *) mmap(0, alloc, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
+	if(t == (void*)-1) {
+#else
+	t = (Bhdr *) mmap(0, alloc, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+	if(t == (void*)-1) {
+#endif
 		p->nbrk--;
 		unlock(&p->l);
 		return nil;
@@ -605,11 +618,14 @@ void*
 smalloc(size_t size)
 {
 	void *v;
+	int retries;
 
-	for(;;){
+	for(retries = 0;; retries++){
 		v = malloc(size);
 		if(v != nil)
 			break;
+		if(retries > 100)
+			panic("smalloc: out of memory allocating %lud bytes", (ulong)size);
 		if(0)
 			print("smalloc waiting from %lux\n", getcallerpc(&size));
 		osenter();
@@ -683,6 +699,39 @@ mallocz(ulong size, int clr)
 	return v;
 }
 
+/*
+ * Check whether v (after Npadlong adjustment) is inside one of our pools.
+ * Returns 1 if it is, 0 if it belongs to the C library or another allocator.
+ */
+static int
+inpool(void *v)
+{
+	Pool *p;
+	Bhdr *bc, *ec;
+
+	for(p = &table.pool[0]; p < &table.pool[nelem(table.pool)]; p++){
+		lock(&p->l);
+		for(bc = p->chain; bc != nil; bc = bc->clink){
+			ec = B2LIMIT(bc);
+			if((Bhdr*)v >= bc && (Bhdr*)v < ec){
+				unlock(&p->l);
+				return 1;
+			}
+		}
+		unlock(&p->l);
+	}
+	return 0;
+}
+
+/*
+ * On hosted platforms, shared libraries (Mesa, LLVM, etc.) may call
+ * free() with pointers from the C library's malloc.  Detect these
+ * and forward them to the real C library free via __libc_free.
+ */
+#if defined(__linux__) && !defined(__BIONIC__)
+extern void __libc_free(void*);
+#endif
+
 void
 free(void *v)
 {
@@ -691,6 +740,19 @@ free(void *v)
 	if(v != nil) {
 		if(Npadlong)
 			v = (ulong*)v-Npadlong;
+#if defined(__linux__) && !defined(__BIONIC__)
+		/* glibc fallback: pointers not in our pool came from libc's
+		 * own malloc (e.g. via dlopen'd libnss_systemd); bypass the
+		 * Inferno allocator and call glibc's real free directly.
+		 * Bionic has no equivalent symbol and headless Phase 0 has
+		 * no dlopen consumers, so the branch is gated off there. */
+		if(!inpool(v)){
+			if(Npadlong)
+				v = (ulong*)v+Npadlong;
+			__libc_free(v);
+			return;
+		}
+#endif
 		D2B(b, v);
 		ML(v, 0, 0);
 		MM(1<<8|0, getcallerpc(&v), (ulong)((ulong*)v+Npadlong), b->size);
@@ -703,8 +765,10 @@ realloc(void *v, size_t size)
 {
 	void *nv;
 
-	if(size == 0)
-		return malloc(size);	/* temporary change until realloc calls can be checked */
+	if(size == 0){
+		free(v);
+		return nil;
+	}
 	if(v != nil)
 		v = (ulong*)v-Npadlong;
 	if(Npadlong!=0 && size!=0)
@@ -774,9 +838,34 @@ msize(void *v)
 	return poolmsize(mainmem, (ulong*)v-Npadlong)-Npadlong*sizeof(ulong);
 }
 
+/*
+ * Override glibc's malloc_usable_size.
+ *
+ * The emu interposes malloc/free/realloc, so all heap allocations
+ * go through the pool allocator.  But glibc's malloc_usable_size
+ * expects glibc chunk metadata.  If a dlopen'd library (e.g.
+ * libnss_systemd) calls malloc_usable_size on a pool-allocated
+ * pointer, glibc reads garbage metadata and crashes.
+ *
+ * Returning 0 is safe: callers use it to check whether realloc
+ * is needed, so they'll just realloc (which goes to our version).
+ * ARM64 UDIV with 0 dividend returns 0 (no trap).
+ */
+size_t
+malloc_usable_size(const void *v)
+{
+	if(v == nil)
+		return 0;
+	return msize((void*)v);
+}
+
 void*
 calloc(size_t n, size_t szelem)
 {
+	if(n == 0 || szelem == 0)
+		return nil;
+	if(szelem > (size_t)-1 / n)
+		return nil;
 	return malloc(n*szelem);
 }
 

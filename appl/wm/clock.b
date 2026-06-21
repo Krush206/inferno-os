@@ -14,14 +14,16 @@ include "draw.m";
 include "math.m";
 	math: Math;
 
-include "tk.m";
-include "wmclient.m";
-	wmclient: Wmclient;
-	Window: import wmclient;
-
 include "daytime.m";
 	daytime: Daytime;
 	Tm: import daytime;
+
+include "wmclient.m";
+	wmclient: Wmclient;
+	Window: import wmclient;
+include "menuhit.m";
+	menuhit: Menuhit;
+	Menu, Mousectl: import menuhit;
 
 Clock: module
 {
@@ -40,13 +42,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	math = load Math Math->PATH;
 	daytime = load Daytime Daytime->PATH;
 	wmclient = load Wmclient Wmclient->PATH;
+	menuhit = load Menuhit Menuhit->PATH;
+	menu := ref Menu(array[] of {"exit"}, nil, 0);
 
 	sys->pctl(Sys->NEWPGRP, nil);
 	wmclient->init();
 
-	if(ctxt == nil)
-		ctxt = wmclient->makedrawcontext();
-
+	sys->sleep(100);
 	w := wmclient->window(ctxt, "clock", Wmclient->Appl);	# Plain?
 	display := w.display;
 	back = display.colormix(Draw->Palebluegreen, Draw->White);
@@ -56,12 +58,13 @@ init(ctxt: ref Draw->Context, nil: list of string)
 	dots = display.newimage(Rect((0,0),(1,1)), Draw->CMAP8, 1, Draw->Blue);
 
 	w.reshape(Rect((0, 0), (100, 100)));
-	w.onscreen("place");
 	w.startinput("ptr" :: nil);
 
 	now := daytime->now();
+	w.onscreen(nil);
 	drawclock(w.image, now);
-
+	menuhit->init(w);
+	
 	ticks := chan of int;
 	spawn timer(ticks, 30*1000);
 	for(;;) alt{
@@ -70,10 +73,25 @@ init(ctxt: ref Draw->Context, nil: list of string)
 		w.wmctl(ctl);
 		if(ctl != nil && ctl[0] == '!')
 			drawclock(w.image, now);
-
+	# ctxt.kbd is an UNBUFFERED chan of int; if the wm sends a key
+	# event and we don't drain, the wm blocks forever and the entire
+	# UI freezes.  We don't want kbd input here, but we MUST drain.
+	# (clock.b previously froze the GUI on first keypress with focus.)
+	<-w.ctxt.kbd =>
+		;	# discard
 	p := <-w.ctxt.ptr =>
-		w.pointer(*p);
-
+		# Any click (button-1, button-2, or button-3) raises the exit
+		# menu.  Button-3 is added for touch — the SDL3 gesture layer
+		# synthesises a long-press as button-3 (see emu/port/draw-sdl3.c
+		# touch_lp_* and INFR-160/163).
+		if(!w.pointer(*p)  && (p.buttons & (1|2|4))){
+			mc := ref Mousectl(w.ctxt.ptr, p.buttons, p.xy, p.msec);
+			n := menuhit->menuhit(p.buttons, mc, menu, nil);
+			if(n == 0){
+				postnote(1, sys->pctl(0, nil), "kill");
+				exit;
+			}
+		}
 	<-ticks =>
 		t := daytime->now();
 		if(t != now){
@@ -81,6 +99,18 @@ init(ctxt: ref Draw->Context, nil: list of string)
 			drawclock(w.image, now);
 		}
 	}
+}
+
+postnote(t : int, pid : int, note : string) : int
+{
+	fd := sys->open("#p/" + string pid + "/ctl", Sys->OWRITE);
+	if (fd == nil)
+		return -1;
+	if (t == 1)
+		note += "grp";
+	sys->fprint(fd, "%s", note);
+	fd = nil;
+	return 0;
 }
 
 ZP := Point(0, 0);

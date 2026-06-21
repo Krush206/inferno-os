@@ -1,3 +1,3 @@
-#!/dis/sh
+#!/dis/sh.dis -n
 
-grep -n $* /dev/null
+grep -n $* *.[chsylbm] /dev/null

@@ -142,7 +142,7 @@ fdclose(Fgrp *f, int fd)
 int
 kchdir(char *path)
 {
-	Chan *c;
+	Chan *c, *old;
 	Pgrp *pg;
 
 	if(waserror())
@@ -150,8 +150,11 @@ kchdir(char *path)
 
 	c = namec(path, Atodir, 0, 0);
 	pg = up->env->pgrp;
-	cclose(pg->dot);
+	wlock(&pg->ns);
+	old = pg->dot;
 	pg->dot = c;
+	wunlock(&pg->ns);
+	cclose(old);
 	poperror();
 	return 0;
 }
@@ -278,8 +281,8 @@ kfd2path(int fd)
 			error(Enomem);
 		}
 		memmove(s, c->name->s, c->name->len+1);
-		cclose(c);
 	}
+	cclose(c);
 	poperror();
 	return s;
 }
@@ -292,7 +295,7 @@ kfauth(int fd, char *aname)
 	if(waserror())
 		return -1;
 
-	validname(aname, 1);
+	validname(aname, 0);
 	c = fdtochan(up->env->fgrp, fd, ORDWR, 0, 1);
 	if(waserror()){
 		cclose(c);
@@ -757,7 +760,7 @@ kseek(int fd, vlong off, int whence)
 		break;
 	}
 	poperror();
-	c->dri = 0;
+	c->dri = 0;	/* clear before cclose to avoid write-after-free */
 	cclose(c);
 	poperror();
 	return off;

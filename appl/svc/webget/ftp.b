@@ -22,9 +22,6 @@ include "url.m";
 
 include "webget.m";
 
-include "dial.m";
-	DI: Dial;
-
 include "wgutils.m";
 	W: WebgetUtils;
 	Fid, Req: import WebgetUtils;
@@ -32,7 +29,7 @@ include "wgutils.m";
 include "transport.m";
 
 FTPPORT: con "21";
-DEBUG: con 1;
+DEBUG: con 0;
 
 # Return codes
 Extra, Success, Incomplete, TempFail, PermFail : con (1+iota);
@@ -45,7 +42,6 @@ init(w: WebgetUtils)
 	S = W->S;
 	B = W->B;
 	U = W->U;
-	DI = W->DI;
 }
 
 connect(c: ref Fid, r: ref Req, donec: chan of ref Fid)
@@ -57,13 +53,13 @@ connect(c: ref Fid, r: ref Req, donec: chan of ref Fid)
 	port := u.port;
 	if(port == "")
 		port = FTPPORT;
-	addr := DI->netmkaddr(u.host, "tcp", port);
+	addr := "tcp!" + u.host + "!" + port;
 
 dummyloop:	# just for breaking out of on error
 	for(;;) {
 		W->log(c, sys->sprint("ftp: dialing %s", addr));
-		net := DI->dial(addr, nil);
-		if(net == nil) {
+		(ok, net) := sys->dial(addr, nil);
+		if(ok < 0) {
 			err = sys->sprint("dial error: %r");
 			break dummyloop;
 		}

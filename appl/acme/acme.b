@@ -4,8 +4,6 @@ include "common.m";
 
 sys : Sys;
 bufio : Bufio;
-env : Env;
-arg : Arg;
 workdir : Workdir;
 drawm : Draw;
 styx : Styx;
@@ -44,8 +42,8 @@ row, reffont, activecol, mouse, typetext, mousetext, barttext, argtext, seltext,
 Xfid : import xfidm;
 cmouse, ckeyboard, cwait, ccommand, ckill, cxfidalloc, cxfidfree, cerr, cplumb, cedit : import dat;
 font, bflush, balloc, draw : import graph;
-PNPROC, PNGROUP : import utils;
-error, warning, postnote : import utils;
+Arg, PNPROC, PNGROUP : import utils;
+arginit, argopt, argf, error, warning, postnote : import utils;
 yellow, green, red, blue, black, white, mainwin, display : import gui;
 Disk : import diskm;
 Row : import rowm;
@@ -59,6 +57,118 @@ Msg : import plumbmsg;
 tfd : ref Sys->FD;
 lasttime : int;
 
+init(ctxt : ref Draw->Context, argl : list of string)
+{
+	acmectxt = ctxt;
+
+	sys = load Sys Sys->PATH;
+	sys->pctl(Sys->NEWPGRP, nil);
+
+	{
+		# tfd = sys->create("./time", Sys->OWRITE, 8r600);
+		# lasttime = sys->millisec();
+		bufio = load Bufio Bufio->PATH;
+		workdir = load Workdir Workdir->PATH;
+		drawm = load Draw Draw->PATH;
+	
+		styx = load Styx Styx->PATH;
+	
+		acme = load Acme SELF;
+	
+		gui = load Gui path(Gui->PATH);
+		graph = load Graph path(Graph->PATH);
+		dat = load Dat path(Dat->PATH);
+		framem = load Framem path(Framem->PATH);
+		utils = load Utils path(Utils->PATH);
+		regx = load Regx path(Regx->PATH);
+		scrl = load Scroll path(Scroll->PATH);
+		textm = load Textm path(Textm->PATH);
+		filem = load Filem path(Filem->PATH);
+		windowm = load Windowm path(Windowm->PATH);
+		rowm = load Rowm path(Rowm->PATH);
+		columnm = load Columnm path(Columnm->PATH);
+		bufferm = load Bufferm path(Bufferm->PATH);
+		diskm = load Diskm path(Diskm->PATH);
+		exec = load Exec path(Exec->PATH);
+		look = load Look path(Look->PATH);
+		timerm = load Timerm path(Timerm->PATH);
+		fsys = load Fsys path(Fsys->PATH);
+		xfidm = load Xfidm path(Xfidm->PATH);
+		plumbmsg = load Plumbmsg Plumbmsg->PATH;
+		editm = load Edit path(Edit->PATH);
+		editlog = load Editlog path(Editlog->PATH);
+		editcmd = load Editcmd path(Editcmd->PATH);
+		styxaux = load Styxaux path(Styxaux->PATH);
+		
+		mods := ref Dat->Mods(sys, bufio, drawm, styx, styxaux,
+						acme, gui, graph, dat, framem,
+						utils, regx, scrl,
+						textm, filem, windowm, rowm, columnm,
+						bufferm, diskm, exec, look, timerm,
+						fsys, xfidm, plumbmsg, editm, editlog, editcmd);
+	
+		styx->init();
+		styxaux->init();
+	
+		utils->init(mods);
+		gui->init(mods);
+		graph->init(mods);
+		dat->init(mods);
+		framem->init(mods);
+		regx->init(mods);
+		scrl->init(mods);
+		textm->init(mods);
+		filem->init(mods);
+		windowm->init(mods);
+		rowm->init(mods);
+		columnm->init(mods);
+		bufferm->init(mods);
+		diskm->init(mods);
+		exec->init(mods);
+		look->init(mods);
+		timerm->init(mods);
+		fsys->init(mods);
+		xfidm->init(mods);
+		editm->init(mods);
+		editlog->init(mods);
+		editcmd->init(mods);
+	
+		utils->debuginit();
+	
+	
+		main(argl);
+	
+	}
+#	exception{
+#		* =>
+#			sys->fprint(sys->fildes(2), "acme: fatal: %s\n", utils->getexc());
+#			sys->print("acme: fatal: %s\n", utils->getexc());
+#			shutdown("error");
+#	}
+}
+
+timing(s : string)
+{
+	thistime := sys->millisec();
+	sys->fprint(tfd, "%s	%d\n", s, thistime-lasttime);
+	lasttime = thistime;
+}
+
+path(p : string) : string
+{
+	if (RELEASECOPY)
+		return p;
+	else {
+		# inlined strrchr since not loaded yet
+		 for (n := len p - 1; n >= 0; n--)
+			if (p[n] == '/')
+				break;
+		 if (n >= 0)
+			p = p[n+1:];
+		 return "/usr/jrf/acme/" + p;
+	}
+}
+
 waitpid0, waitpid1 : int;
 mainpid : int;
 
@@ -66,8 +176,8 @@ fontcache : array of ref Reffont;
 nfontcache : int;
 reffonts : array of ref Reffont;
 deffontnames := array[2] of {
-	"/fonts/lucidasans/euro.8.font",
-	"/fonts/lucm/unicode.9.font",
+	"/fonts/combined/unicode.sans.14.font",
+	"/fonts/combined/unicode.14.font",
 };
 
 command : ref Command;
@@ -77,150 +187,54 @@ WPERCOL : con 8;
 NSnarf : con 32;
 snarfrune : ref Dat->Astring;
 
-init(ctxt : ref Draw->Context, argl : list of string)
+main(argl : list of string)
 {
 	i, ac : int;
 	loadfile : string;
 	p : int;
 	c : ref Column;
+	arg : ref Arg;
 	ncol : int;
-	acmectxt = ctxt;
 
-	sys = load Sys Sys->PATH;
-	sys->pctl(Sys->NEWPGRP, nil);
-
-	# tfd = sys->create("./time", Sys->OWRITE, 8r600);
-	# lasttime = sys->millisec();
-	arg = load Arg Arg->PATH;
-	env = load Env Env->PATH;
-	bufio = load Bufio Bufio->PATH;
-	workdir = load Workdir Workdir->PATH;
-	drawm = load Draw Draw->PATH;
-
-	styx = load Styx Styx->PATH;
-
-	acme = load Acme SELF;
-
-	gui = load Gui path(Gui->PATH);
-	graph = load Graph path(Graph->PATH);
-	dat = load Dat path(Dat->PATH);
-	framem = load Framem path(Framem->PATH);
-	utils = load Utils path(Utils->PATH);
-	regx = load Regx path(Regx->PATH);
-	scrl = load Scroll path(Scroll->PATH);
-	textm = load Textm path(Textm->PATH);
-	filem = load Filem path(Filem->PATH);
-	windowm = load Windowm path(Windowm->PATH);
-	rowm = load Rowm path(Rowm->PATH);
-	columnm = load Columnm path(Columnm->PATH);
-	bufferm = load Bufferm path(Bufferm->PATH);
-	diskm = load Diskm path(Diskm->PATH);
-	exec = load Exec path(Exec->PATH);
-	look = load Look path(Look->PATH);
-	timerm = load Timerm path(Timerm->PATH);
-	fsys = load Fsys path(Fsys->PATH);
-	xfidm = load Xfidm path(Xfidm->PATH);
-	plumbmsg = load Plumbmsg Plumbmsg->PATH;
-	editm = load Edit path(Edit->PATH);
-	editlog = load Editlog path(Editlog->PATH);
-	editcmd = load Editcmd path(Editcmd->PATH);
-	styxaux = load Styxaux path(Styxaux->PATH);
-	
-	mods := ref Dat->Mods(sys, bufio, env, arg, 
-					drawm, styx, styxaux,
-					acme, gui, graph, dat, framem,
-					utils, regx, scrl,
-					textm, filem, windowm, rowm, columnm,
-					bufferm, diskm, exec, look, timerm,
-					fsys, xfidm, plumbmsg, editm, editlog, editcmd);
-
-	arg->init(argl);
-	styx->init();
-	styxaux->init();
-
-	# Commandline flag handling
 	ncol = -1;
 
 	mainpid = sys->pctl(0, nil);
 	loadfile = nil;
 	fontnames = array[2] of string;
 	fontnames[0:] = deffontnames[0:2];
-	f := env->getenv("acme-font");
+	f := utils->getenv("acme-font");
 	if (f != nil)
 		fontnames[0] = f;
-	else {
-		f = env->getenv("font");
-		if (f != nil)
-			fontnames[0] = f;
-	}
-	f = env->getenv("acme-Font");
+	f = utils->getenv("acme-Font");
 	if (f != nil)
 		fontnames[1] = f;
-	else {
-		f = env->getenv("Font");
-		if (f != nil)
-			fontnames[0] = f;
+	arg = arginit(argl);
+	while(ac = argopt(arg)) case(ac){
+	'a' =>
+		dat->globalautoindent = TRUE;
+	'b' =>
+		dat->bartflag = TRUE;
+	'c' =>
+		ncol = int argf(arg);
+	'f' =>
+		fontnames[0] = argf(arg);
+	'F' =>
+		fontnames[1] = argf(arg);
+	'l' =>
+		loadfile = argf(arg);
 	}
 
-	arg->setusage("acme [-f varfont] [-F fixfont] [-c ncol] [-b] [-l file | file ...]");
-
-	while((ac = arg->opt()) != 0)
-		case(ac){
-		'b' =>
-			dat->bartflag = TRUE;
-		'c' =>
-			ncol = int arg->earg();
-		'f' =>
-			fontnames[0] = arg->earg();
-		'F' =>
-			fontnames[1] = arg->earg();
-		'l' =>
-			loadfile = arg->earg();
-		* =>
-			arg->usage();
-		}
-	argl = arg->argv();
-
-	utils->init(mods);
-	gui->init(mods);
-	graph->init(mods);
-	dat->init(mods);
-	framem->init(mods);
-	regx->init(mods);
-	scrl->init(mods);
-	textm->init(mods);
-	filem->init(mods);
-	windowm->init(mods);
-	rowm->init(mods);
-	columnm->init(mods);
-	bufferm->init(mods);
-	diskm->init(mods);
-	exec->init(mods);
-	look->init(mods);
-	timerm->init(mods);
-	fsys->init(mods);
-	xfidm->init(mods);
-	editm->init(mods);
-	editlog->init(mods);
-	editcmd->init(mods);
-
-	utils->debuginit();
-
-	if (plumbmsg->init(1, "edit", Dat->PLUMBSIZE) >= 0)
-		plumbed = 1;
-
-	# Begin main logic
-	dat->home = env->getenv("home");
+	dat->home = utils->getenv("home");
 	if (dat->home == nil)
 		dat->home = utils->gethome(utils->getuser());
-	ts := env->getenv("tabstop");
+	ts := utils->getenv("tabstop");
 	if (ts != nil)
 		maxtab = int ts;
 	if (maxtab <= 0)
 		maxtab = 4;
 	snarfrune = utils->stralloc(NSnarf);
 	sys->pctl(Sys->FORKNS|Sys->FORKENV, nil);
-	env->setenv("font", fontnames[0]);
+	utils->setenv("font", fontnames[0]);
 	sys->bind("/acme/dis", "/dis", Sys->MBEFORE);
 	wdir = workdir->init();
 	if (wdir == nil)
@@ -248,8 +262,9 @@ init(ctxt : ref Draw->Context, argl : list of string)
 	nfontcache = 1;
 	fontcache[0] = reffont;
 
-	iconinit();
+	colinit();
 	usercolinit();
+	iconinit();
 	timerm->timerinit();
 	regx->rxinit();
 
@@ -268,7 +283,6 @@ init(ctxt : ref Draw->Context, argl : list of string)
 	sync := chan of int;
 	spawn waitproc(sys->pctl(0, nil), sync);
 	<- sync;
-	spawn plumbproc();
 
 	fsys->fsysinit();
 	dat->disk = (dat->disk).init();
@@ -281,10 +295,10 @@ init(ctxt : ref Draw->Context, argl : list of string)
 	else{
 		row.init(mainwin.clipr);
 		if(ncol < 0){
-			if(arg->argv() == nil)
+			if(arg.av == nil)
 				ncol = 2;
 			else{
-				ncol = (len arg->argv()+(WPERCOL-1))/WPERCOL;
+				ncol = (len arg.av+(WPERCOL-1))/WPERCOL;
 				if(ncol < 2)
 					ncol = 2;
 			}
@@ -297,12 +311,12 @@ init(ctxt : ref Draw->Context, argl : list of string)
 				error("initializing columns");
 		}
 		c = row.col[row.ncol-1];
-		if(arg->argv() == nil)
+		if(arg.av == nil)
 			readfile(c, wdir);
 		else
 			i = 0;
-			for( ; argl != nil; argl = tl argl){
-				filen := hd argl;
+			for( ; arg.av != nil; arg.av = tl arg.av){
+				filen := hd arg.av;
 				p = utils->strrchr(filen, '/');
 				if((p>=0 && filen[p:] == "/guide") || i/WPERCOL>=row.ncol)
 					readfile(c, filen);
@@ -317,34 +331,15 @@ init(ctxt : ref Draw->Context, argl : list of string)
 	spawn mousetask();
 	spawn waittask();
 	spawn xfidalloctask();
+	# Run the plumber inside acme, so plumber can start acme clients
+	spawn exec->run(nil, "{bind -bc '#splumber' /chan; plumber > /tmp/plumb.log >[2=1]&}", nil, 0, TRUE, nil, nil, FALSE);
+	spawn plumbproc();
 
 	# notify(shutdown);
 	# waitc := chan of int;
 	# <-waitc;
 	# killprocs();
 	exit;
-}
-
-timing(s : string)
-{
-	thistime := sys->millisec();
-	sys->fprint(tfd, "%s	%d\n", s, thistime-lasttime);
-	lasttime = thistime;
-}
-
-path(p : string) : string
-{
-	if (RELEASECOPY)
-		return p;
-	else {
-		# inlined strrchr since not loaded yet
-		 for (n := len p - 1; n >= 0; n--)
-			if (p[n] == '/')
-				break;
-		 if (n >= 0)
-			p = p[n+1:];
-		 return "/usr/jrf/acme/" + p;
-	}
 }
 
 readfile(c : ref Column, s : string)
@@ -492,10 +487,10 @@ keyboardtask()
 			}
 		}
 	}
-	exception{
+	exception e{
 		* =>
 			shutdown(utils->getexc());
-			raise;
+			raise e;
 			# acmeexit(nil);
 	}
 }
@@ -578,6 +573,8 @@ mousetask()
 					row.qlock.unlock();
 					break;
 				}
+				
+# TAG scroll wheel 
 				if(w != nil && (mouse.buttons &(8|16))){
 					if(mouse.buttons & 8)
 						but = Dat->Kscrollup;
@@ -653,10 +650,10 @@ mousetask()
 			}
 		}
 	}
-	exception{
+	exception e {
 		* =>
 			shutdown(utils->getexc());
-			raise;
+			raise e;
 			# acmeexit(nil);
 	}
 }
@@ -954,25 +951,35 @@ boxbits := array[64] of {
 	 byte 16r7F, byte 16rFE, byte 16r00, byte 16r00,
 };
 
-iconinit()
+colinit()
 {
-	r : Rect;
-
-	# Blue
 	tagcols = array[NCOL] of ref Draw->Image;
+	textcols = array[NCOL] of ref Draw->Image;
+
 	tagcols[BACK] = display.colormix(Draw->Palebluegreen, Draw->White);
 	tagcols[HIGH] = display.color(Draw->Palegreygreen);
 	tagcols[BORD] = display.color(Draw->Purpleblue);
 	tagcols[TEXT] = black;
 	tagcols[HTEXT] = black;
-
-	# Yellow
-	textcols = array[NCOL] of ref Draw->Image;
 	textcols[BACK] = display.colormix(Draw->Paleyellow, Draw->White);
 	textcols[HIGH] = display.color(Draw->Darkyellow);
-	textcols[BORD] = display.color(Draw->Yellowgreen); 
+	textcols[BORD] = display.color(Draw->Yellowgreen);
 	textcols[TEXT] = black;
 	textcols[HTEXT] = black;
+
+	but2col = display.rgb(16raa, 16r00, 16r00);
+	but3col = display.rgb(16r00, 16r66, 16r00);
+	but2colt = white;
+	but3colt = white;
+	modbutcol =  display.rgb(16r00, 16r00, 16r99);
+	
+	colbordercol = display.black;
+	rowbordercol = display.black;
+}
+
+iconinit()
+{
+	r : Rect;
 
 	if(button != nil)
 		button = modbutton = colbutton = nil;
@@ -991,7 +998,7 @@ iconinit()
 	r.max.x -= 2;
 	draw(modbutton, r, tagcols[BORD], nil, (0, 0));
 	r = r.inset(2);
-	draw(modbutton, r, display.rgb(16r00, 16r00, 16r99), nil, (0, 0));	# was DMedblue
+	draw(modbutton, r, modbutcol, nil, (0, 0));	# was DMedblue
 
 	r = button.r;
 	colbutton = balloc(r, mainwin.chans, Draw->White);
@@ -999,13 +1006,8 @@ iconinit()
 	r.max.x -= 2;
 	draw(colbutton, r, tagcols[BORD], nil, (0, 0));
 
-#	arrowcursor = ref Cursor((-1, -1), (16, 32), arrowbits);
+	arrowcursor = ref Cursor((-1, -1), (16, 32), arrowbits);
 	boxcursor = ref Cursor((-7, -7), (16, 32), boxbits);
-
-	but2col = display.rgb(16raa, 16r00, 16r00);
-	but3col = display.rgb(16r00, 16r66, 16r00);
-	but2colt = white;
-	but3colt = white;
 
 	graph->cursorswitch(arrowcursor);
 }
@@ -1030,29 +1032,45 @@ cinit()
 
 col(s : string, n : int) : int
 {
-	return ((s[n]-'0') << 4) | (s[n+1]-'0');
+	d := 0;
+	if (s[n] >= 'A' && s[n] <= 'F')
+		d = ((s[n] - 'A' + 10)<<4);
+	else
+		d =  ((s[n]-'0') << 4);
+	n++;
+	if (s[n] >= 'A' && s[n] <= 'F')
+		d |= (s[n] - 'A' + 10);
+	else
+		d |=  (s[n]-'0');
+	
+	return d;
 }
 
 rgb(s : string, n : int) : (int, int, int)
 {
 	return (col(s, n), col(s, n+2), col(s, n+4));
 }
-
+	
 cenv(s : string, t : string, but : int, i : ref Image) : ref Image
 {
-	c := env->getenv("acme-" + s + "-" + t + "-" + string but);
+	c := utils->getenv("acme-" + s + "-" + t + "-" + string but);
 	if (c == nil)
-		c = env->getenv("acme-" + s + "-" + string but);
+		c = utils->getenv("acme-" + s + "-" + string but);
 	if (c == nil && but != 0)
-		c = env->getenv("acme-" + s);
+		c = utils->getenv("acme-" + s);
+	if(c != nil && c[0] == '\''){
+		c = c[1:len c - 1];
+	}
 	if (c != nil) {
 		if (c[0] == '#' && len c >= 7) {
-			(r1, g1, b1) := rgb(c, 1);
+			(r, g, b) := rgb(c, 1);
+			cmap1 := (r<<24 | g <<16 | b << 8 | 16rff);
 			if (len c >= 15 && c[7] == '/' && c[8] == '#') {
-				(r2, g2, b2) := rgb(c, 9);
-				return display.colormix((r1<<24)|(g1<<16)|(b1<<8)|16rFF, (r2<<24)|(g2<<16)|(b2<<8)|16rFF);
+				(r, g, b) = rgb(c, 9);
+				cmap2 :=(r<<24 | g <<16 | b << 8 | 16rff);
+				return display.colormix(cmap1, cmap2);
 			}
-			return display.color((r1<<24)|(g1<<16)|(b1<<8)|16rFF);
+			return display.color(cmap1);
 		}
 		for (j := 0; j < len c; j++)
 			if (c[j] >= 'A' && c[j] <= 'Z')
@@ -1075,10 +1093,15 @@ usercolinit()
 	but2col = cenv("bg", "text", 2, but2col);
 	but3colt = cenv("fg", "text", 3, but3colt);
 	but3col = cenv("bg", "text", 3, but3col);
+	modbutcol = cenv("mod", "but", 0, modbutcol);
 	tagcols[TEXT] = cenv("fg", "tag", 0, tagcols[TEXT]);
 	tagcols[BACK] = cenv("bg", "tag", 0, tagcols[BACK]);
 	tagcols[HTEXT] = cenv("fg", "tag", 1, tagcols[HTEXT]);
 	tagcols[HIGH] = cenv("bg", "tag", 1, tagcols[HIGH]);
+	colbordercol = cenv("bord", "col", 0, display.black);
+	rowbordercol = cenv("bord", "row", 0, display.black);
+	tagcols[BORD] = cenv("bord", "tag", 0, tagcols[BORD]);
+	textcols[BORD] = cenv("bord", "text", 0, textcols[BORD]);
 }
 
 getsnarf()
@@ -1116,18 +1139,24 @@ plumbproc()
 {
 	plumbpid = sys->pctl(0, nil);
 	for(;;){
-		msg := Msg.recv();
-		if(msg == nil){
-			sys->print("Acme: can't read /chan/plumb.edit: %r\n");
-			plumbpid = 0;
-			plumbed = 0;
-			return;
+		while(plumbmsg->init(1, "edit", Dat->PLUMBSIZE) < 0){
+			sys->sleep(2000);
 		}
-		if(msg.kind != "text"){
-			sys->print("Acme: can't interpret '%s' kind of message\n", msg.kind);
-			continue;
+		plumbed = 1;
+		for(;;){
+			msg := Msg.recv();
+			if(msg == nil){
+				sys->print("Acme: can't read /chan/plumb.edit: %r\n");
+				plumbpid = 0;
+				plumbed = 0;
+				break;
+			}
+			if(msg.kind != "text"){
+				sys->print("Acme: can't interpret '%s' kind of message\n", msg.kind);
+				continue;
+			}
+			# sys->print("msg %s\n", string msg.data);
+			cplumb <-= msg;
 		}
-# sys->print("msg %s\n", string msg.data);
-		cplumb <-= msg;
 	}
 }

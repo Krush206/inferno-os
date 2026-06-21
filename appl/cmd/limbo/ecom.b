@@ -1231,14 +1231,15 @@ ecom(src: Src, nto, n: ref Node): ref Node
 		if(nto.addable >= Ralways)
 			nto = ecom(src, tto = talloc(nto.ty, nil), nto);
 		op = IINDX;
-		case left.ty.tof.size{
-		IBY2LG =>
+		# On 64-bit systems, IBY2WD == IBY2LG == 8.
+		# Use if-else to avoid duplicate case values.
+		if(left.ty.tof.size == IBY2LG){
 			op = IINDL;
 			if(left.ty.tof == treal)
 				op = IINDF;
-		IBY2WD =>
+		}else if(left.ty.tof.size == IBY2WD){
 			op = IINDW;
-		1 =>
+		}else if(left.ty.tof.size == 1){
 			op = IINDB;
 		}
 		genrawop(src, op, left, nto, right);
@@ -1871,20 +1872,20 @@ tuplrcom(n: ref Node, nto: ref Node)
 # boolean compiler
 # fall through when condition == true
 #
-bcom(n: ref Node, iftrue: int, b: ref Inst): ref Inst
+bcom(n: ref Node, true: int, b: ref Inst): ref Inst
 {
 	tleft, tright: ref Node;
 
 	if(n.op == Ocomma){
 		tn := n.left.left;
 		ecom(n.left.src, nil, n.left);
-		b = bcom(n.right, iftrue, b);
+		b = bcom(n.right, true, b);
 		tfree(tn);
 		return b;
 	}
 
 	if(debug['b'])
-		print("bcom %s %d\n", nodeconv(n), iftrue);
+		print("bcom %s %d\n", nodeconv(n), true);
 
 	left := n.left;
 	right := n.right;
@@ -1893,15 +1894,15 @@ bcom(n: ref Node, iftrue: int, b: ref Inst): ref Inst
 	Onothing =>
 		return b;
 	Onot =>
-		return bcom(n.left, !iftrue, b);
+		return bcom(n.left, !true, b);
 	Oandand =>
-		if(!iftrue)
-			return oror(n, iftrue, b);
-		return andand(n, iftrue, b);
+		if(!true)
+			return oror(n, true, b);
+		return andand(n, true, b);
 	Ooror =>
-		if(!iftrue)
-			return andand(n, iftrue, b);
-		return oror(n, iftrue, b);
+		if(!true)
+			return andand(n, true, b);
+		return oror(n, true, b);
 	Ogt or
 	Ogeq or
 	Oneq or
@@ -1921,7 +1922,7 @@ bcom(n: ref Node, iftrue: int, b: ref Inst): ref Inst
 		return b;
 	}
 
-	if(iftrue)
+	if(true)
 		op = oprelinvert[op];
 
 	if(left.addable < right.addable){
@@ -1949,21 +1950,21 @@ bcom(n: ref Node, iftrue: int, b: ref Inst): ref Inst
 	return bb;
 }
 
-andand(n: ref Node, iftrue: int, b: ref Inst): ref Inst
+andand(n: ref Node, true: int, b: ref Inst): ref Inst
 {
 	if(debug['b'])
 		print("andand %s\n", nodeconv(n));
-	b = bcom(n.left, iftrue, b);
-	b = bcom(n.right, iftrue, b);
+	b = bcom(n.left, true, b);
+	b = bcom(n.right, true, b);
 	return b;
 }
 
-oror(n: ref Node, iftrue: int, b: ref Inst): ref Inst
+oror(n: ref Node, true: int, b: ref Inst): ref Inst
 {
 	if(debug['b'])
 		print("oror %s\n", nodeconv(n));
-	bb := bcom(n.left, !iftrue, nil);
-	b = bcom(n.right, iftrue, b);
+	bb := bcom(n.left, !true, nil);
+	b = bcom(n.right, true, b);
 	patch(bb, nextinst());
 	return b;
 }

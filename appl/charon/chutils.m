@@ -13,7 +13,6 @@ CharonUtils: module
 	J: Script;
 	CH: Charon;
 	CK: Cookiesrv;
-	DI: Dial;
 
 	# HTTP methods
 	HGet, HPost : con iota;
@@ -25,7 +24,8 @@ CharonUtils: module
 
 	Audio32kadpcm, AudioBasic,
 
-	ImageCgm, ImageG3fax, ImageGif, ImageIef, ImageJpeg, ImagePng, ImageTiff,
+	ImageAvif, ImageCgm, ImageG3fax, ImageGif, ImageIef, ImageJpeg, ImagePng,
+	ImageSvg, ImageTiff, ImageWebP,
 	ImageXBit, ImageXBit2, ImageXBitmulti, ImageXInfernoBit, ImageXXBitmap,
 
 	ModelVrml,
@@ -157,6 +157,9 @@ CharonUtils: module
 		imagecachenum: int;	# imcache.nlimit
 		imagecachemem: int;	# imcache.memlimit
 		docookies:	int;		# allow cookie storage/sending?
+		doacme:		int;
+		dorender:	int;		# render-to-file mode (no event loop)
+		headless:	int;		# headless mode: skip Img, Script, heavy rendering
 		doscripts:		int;		# allow scripts to execute?
 		httpminor:	int;		# use HTTP 1.httpminor
 		agentname:	string;	# what to send in HTTP header
@@ -235,8 +238,8 @@ CharonUtils: module
 		host:	string;			# host name
 		port:	int;			# port number
 		scheme: string;		# Url scheme ("http", "file", etc.)
-		conn:	ref Dial->Connection;	# fds, etc.
- 		sslx:	ref SSL3->Context;	# ssl connection
+		conn:	Sys->Connection;	# fds, etc.
+ 		tlsconn:	ref TLS->Conn;		# tls connection
  		vers:	int;			# ssl version
 		state:	int;			# NCfree, etc.
 		queue:	cyclic array of ref ByteSource;
@@ -250,6 +253,9 @@ CharonUtils: module
 		tstate:	int;		# for use by transport
 		tbuf: 	array of byte;	# for use by transport
 		idlestart:	int;		# timestamp when went Idle
+		chunked:	int;		# 1 if response uses chunked TE
+		chunkrem:	int;		# bytes remaining in current chunk
+		chunkeof:	int;		# 1 if final zero-length chunk seen
 
 		new: fn(id: int) : ref Netconn;
 		makefree: fn(nc: self ref Netconn);
@@ -344,6 +350,8 @@ CharonUtils: module
 	abortgo: fn(gopgrp: int);
 	netget: fn();
 
+	fetchurl_text: fn(url: ref Url->Parsedurl) : string;
+
 	# Miscellaneous utility functions
 	kill: fn(pid: int, dogroup: int);
 	getline: fn(fd: ref Sys->FD, buf: array of byte, bstart, bend: int) :
@@ -361,6 +369,7 @@ CharonUtils: module
 	color: fn(s: string, dflt: int) : int;
 	max: fn(a, b : int) : int;
 	min: fn(a, b : int) : int;
+	raisex: fn(e: string);
 	assert: fn(i: int);
 	stripscript: fn(s: string) : string;	# strip HTML comments from Script
 	getconv: fn(chset : string) : Btos;

@@ -1,780 +1,1032 @@
-implement WmMan;
+implement ManViewer;
+
+#
+# wm/man - Draw-based manual page viewer
+#
+# Displays Inferno manual pages using the native widget toolkit.
+# Parses troff -man markup via the Parseman library and renders
+# with proper fonts (bold for headings and .B text, regular for body).
+#
+# Usage:
+#   wm/man [section ...] title ...
+#   wm/man -f file ...
+#
+# Keyboard:
+#   Up/Down      scroll one line
+#   Page Up/Down scroll one screenful
+#   Home/End     go to top/bottom
+#   Ctrl-F       find text
+#   Ctrl-G       find next
+#   Ctrl-Q       quit
+#   Escape       cancel find
+#
+# Mouse:
+#   Button 1     select text (future)
+#   Button 2     paste / plumb
+#   Button 3     context menu
+#   Scroll wheel scroll up/down
+#
 
 include "sys.m";
 	sys: Sys;
 
 include "draw.m";
 	draw: Draw;
-	Font: import draw;
+	Display, Font, Image, Point, Rect: import draw;
 
-include "tk.m";
-	tk: Tk;
+include "wmclient.m";
+	wmclient: Wmclient;
+	Window: import wmclient;
 
-include "tkclient.m";
-	tkclient: Tkclient;
+include "menu.m";
+	menumod: Menu;
+	Popup: import menumod;
 
-include "plumbmsg.m";
+include "bufio.m";
+	bufio: Bufio;
+	Iobuf: import bufio;
+
+include "string.m";
+	str: String;
+
+include "lucitheme.m";
+
+include "widget.m";
+	widgetmod: Widget;
+	Scrollbar, Statusbar, Kbdfilter: import widgetmod;
+
 include "man.m";
-	man: Man;
 
-WmMan: module {
-	init: fn (ctxt: ref Draw->Context, argv: list of string);
+include "arg.m";
+	arg: Arg;
+
+ManViewer: module
+{
+	init: fn(ctxt: ref Draw->Context, argv: list of string);
 };
 
-window: ref Tk->Toplevel;
+# Veltro IPC directory
+MAN_DIR: con "/tmp/veltro/man";
 
-W: adt {
-	textwidth: fn(nil: self ref W, text: Text): int;
+# Fallback colours (overridden by theme)
+BG:	con int 16rFFFDF6FF;
+FG:	con int 16r333333FF;
+HDCOL:	con int 16r1A1A1AFF;		# heading colour
+LKCOL:	con int 16r2266CCFF;		# link colour
+
+# Dimensions
+MARGIN:	con 6;
+
+# Key constants
+Khome:		con 16rFF61;
+Kend:		con 16rFF57;
+Kup:		con 16rFF52;
+Kdown:		con 16rFF54;
+Kleft:		con 16rFF51;
+Kright:		con 16rFF53;
+Kpgup:		con 16rFF55;
+Kpgdown:	con 16rFF56;
+Kdel:		con 16rFF9F;
+Kins:		con 16rFF63;
+Kbs:		con 8;
+Kesc:		con 27;
+
+# Viewer type for Parseman textwidth callback (pixel-based)
+V: adt {
+	textwidth: fn(v: self ref V, text: Parseman->Text): int;
 };
 
-ROMAN: con "/fonts/lucidasans/unicode.7.font";
-BOLD: con "/fonts/lucidasans/typelatin1.7.font";
-ITALIC: con "/fonts/lucidasans/italiclatin1.7.font";
-HEADING1: con "/fonts/lucidasans/boldlatin1.7.font";
-HEADING2: con "/fonts/lucidasans/italiclatin1.7.font";
-rfont, bfont, ifont, h1font, h2font: ref Font;
+# ---------- Parsed page storage ----------
+# Each rendered line is a list of (indent, Text) spans.
+ManLine: type list of (int, Parseman->Text);
 
-GOATTR: con Parseman->ATTR_LAST << iota;
-MANPATH: con "/man/1/man";
-INDENT: con 40;
+lines: array of ManLine;
+nlines: int;
+topline: int;
+vislines: int;
 
-metrics: Parseman->Metrics;
-parser: Parseman;
-Text: import parser;
+# Display resources
+display: ref Display;
+rfont: ref Font;		# regular (roman) font
+bfont: ref Font;		# bold font
+bgcolor: ref Image;
+fgcolor: ref Image;
+hdcolor: ref Image;
+lkcolor: ref Image;
+dimcolor: ref Image;
 
+scrollbar: ref Scrollbar;
+statbar: ref Statusbar;
+kbdfilter: ref Kbdfilter;
 
-tkconfig := array [] of {
-	"frame .input",
-	"frame .view",
-	"text .view.t -state disabled -width 0 -height 0 -bg white -yscrollcommand {.view.yscroll set} -xscrollcommand {.view.xscroll set}",
-	"scrollbar .view.yscroll -orient vertical -command {.view.t yview}",
-	"scrollbar .view.xscroll -orient horizontal -command {.view.t xview}",
-	"entry .input.e -bg white",
-	"button .input.back -state disabled -bitmap small_color_left.bit -command {send nav b}",
-	"button .input.forward -state disabled -bitmap small_color_right.bit -command {send nav f}",
+w: ref Window;
+stderr: ref Sys->FD;
 
-	"pack .input.back .input.forward -side left -anchor w",
-	"pack .input.e -expand 1 -fill x",
+# Search state
+searchstr := "";
 
- 	"pack .view.yscroll -fill y -side left",
- 	"pack .view.t -expand 1 -fill both",
-	
-	"bind .input.e <Key-\n> {send nav e}",
-	"bind .input.e <Button-1> +{grab set .input.e}",
-	"bind .input.e <ButtonRelease-1> +{grab release .input.e}",
-	"bind .view.t <Button-1> +{grab set .view.t}",
-	"bind .view.t <ButtonRelease-1> +{grab release .view.t}",
-	"bind .view.t <ButtonRelease-3> {send plumb %x %y}",
+# Prompt mode: 0=none, 1=find, 2=open
+promptmode := 0;
 
-	"pack .input -fill x",
-	"pack .view -expand 1 -fill both",
-	"pack propagate . 0",
-	". configure -width 500 -height 500",
-	"focus .input.e",
-};
+# Page info for title bar
+pagetitle := "man";
 
-History: adt {
-	prev: cyclic ref History;
-	next: cyclic ref History;
-	topline: string;
-	searchstart: string;
-	searchend: string;
-	pick {
-	Search =>
-		search: list of string;
-	Go =>
-		path: string;
-	}
-};
-
-history: ref History;
-
+# History for back navigation
+history: list of string;
+histfwd: list of string;
 
 init(ctxt: ref Draw->Context, argv: list of string)
 {
-	doplumb := 0;
-
 	sys = load Sys Sys->PATH;
-	if (ctxt == nil) {
-		sys->fprint(sys->fildes(2), "man: no window context\n");
-		raise "fail:bad context";
-	}
-	sys->pctl(Sys->NEWPGRP, nil);
-
 	draw = load Draw Draw->PATH;
-	if (draw == nil)
-		loaderr("Draw");
+	wmclient = load Wmclient Wmclient->PATH;
+	menumod = load Menu Menu->PATH;
+	bufio = load Bufio Bufio->PATH;
+	str = load String String->PATH;
+	stderr = sys->fildes(2);
 
-	tk = load Tk Tk->PATH;
-	if (tk == nil)
-		loaderr(Tk->PATH);
-
-	man = load Man Man->PATH;
-	if (man == nil)
-		loaderr(Man->PATH);
-
-	tkclient = load Tkclient Tkclient->PATH;
-	if (tkclient == nil)
-		loaderr(Tkclient->PATH);
-
-	parser = load Parseman Parseman->PATH;
-	if (parser == nil)
-		loaderr(Parseman->PATH);
-	parser->init();
-
-	plumber := load Plumbmsg Plumbmsg->PATH;
-	if (plumber != nil) {
-		if (plumber->init(1, nil, 0) >= 0)
-			doplumb = 1;
+	if(wmclient == nil) {
+		sys->fprint(stderr, "wm/man: cannot load Wmclient: %r\n");
+		raise "fail:init";
+	}
+	if(bufio == nil) {
+		sys->fprint(stderr, "wm/man: cannot load Bufio: %r\n");
+		raise "fail:init";
 	}
 
-	argv = tl argv;
+	widgetmod = load Widget Widget->PATH;
+	if(widgetmod == nil) {
+		sys->fprint(stderr, "wm/man: cannot load Widget: %r\n");
+		raise "fail:init";
+	}
+	kbdfilter = Kbdfilter.new();
 
-	rfont = Font.open(ctxt.display, ROMAN);
-	bfont = Font.open(ctxt.display, BOLD);
-	ifont = Font.open(ctxt.display, ITALIC);
-	h1font = Font.open(ctxt.display, HEADING1);
-	h2font = Font.open(ctxt.display, HEADING2);
+	if(ctxt == nil) {
+		sys->fprint(stderr, "wm/man: no window context\n");
+		raise "fail:no context";
+	}
+
+	sys->pctl(Sys->NEWPGRP, nil);
+	wmclient->init();
+
+	# Parse arguments
+	filemode := 0;
+	files: list of string;
+	sections: list of string;
+
+	arg = load Arg Arg->PATH;
+	if(arg != nil) {
+		arg->init(argv);
+		while((c := arg->opt()))
+			case c {
+			'f' =>
+				filemode = 1;
+			}
+		argv = arg->argv();
+	} else
+		argv = tl argv;
+
+	if(filemode) {
+		# -f: treat remaining args as filenames
+		for(; argv != nil; argv = tl argv)
+			files = hd argv :: files;
+	} else {
+		# Separate section numbers from titles
+		for(; argv != nil; argv = tl argv) {
+			a := hd argv;
+			if(isdir("/man/" + a))
+				sections = a :: sections;
+			else {
+				# Look up title in INDEX files
+				found := lookupman(sections, a);
+				for(; found != nil; found = tl found)
+					files = hd found :: files;
+			}
+		}
+	}
+
+	# Reverse to get original order
+	rfiles: list of string;
+	for(; files != nil; files = tl files)
+		rfiles = hd files :: rfiles;
+	files = rfiles;
+
+	# Create window
+	w = wmclient->window(ctxt, "man", Wmclient->Appl);
+	display = w.display;
+
+	# Load fonts
+	rfont = Font.open(display, "/fonts/combined/unicode.sans.14.font");
+	if(rfont == nil)
+		rfont = Font.open(display, "*default*");
+	bfont = Font.open(display, "/fonts/combined/unicode.sans.bold.14.font");
+	if(bfont == nil)
+		bfont = rfont;
+
+	# Load theme colours
+	lucitheme := load Lucitheme Lucitheme->PATH;
+	if(lucitheme != nil) {
+		th := lucitheme->gettheme();
+		bgcolor = display.color(th.editbg);
+		fgcolor = display.color(th.edittext);
+		hdcolor = display.color(th.text);
+		lkcolor = display.color(th.accent);
+		dimcolor = display.color(th.dim);
+	} else {
+		bgcolor = display.color(BG);
+		fgcolor = display.color(FG);
+		hdcolor = display.color(HDCOL);
+		lkcolor = display.color(LKCOL);
+		dimcolor = display.color(FG);
+	}
+	widgetmod->init(display, rfont);
+	scrollbar = Scrollbar.new(Rect((0,0),(0,0)), 1);
+	statbar = Statusbar.new(Rect((0,0),(0,0)));
+
+	# Initialize with empty content
+	lines = array[4096] of ManLine;
+	nlines = 0;
+	topline = 0;
+	history = nil;
+	histfwd = nil;
+
+	# Load first file
+	if(files != nil)
+		loadpage(hd files);
+	else {
+		# No args — show usage
+		pagetitle = "man";
+		statbar.left = "Click here or Ctrl-O to open a man page";
+	}
+
+	w.reshape(Rect((0, 0), (680, 520)));
+	w.startinput("kbd" :: "ptr" :: nil);
+	w.onscreen(nil);
+
+	if(menumod != nil)
+		menumod->init(display, rfont);
+	menu := menumod->new(array[] of {"open", "back", "forward", "find", "top", "bottom", "exit"});
+
+	# Veltro IPC
+	initmandir();
+	writemanstate();
+	ticks := chan of int;
+	spawn timer(ticks, 500);
+
+	# Listen for live theme changes
+	themech := chan[1] of int;
+	spawn themelistener(themech);
+
+	redraw();
+
+	for(;;) alt {
+	<-themech =>
+		reloadcolors();
+		redraw();
+	<-ticks =>
+		if(checkctlfile())
+			redraw();
+	ctl := <-w.ctl or
+	ctl = <-w.ctxt.ctl =>
+		w.wmctl(ctl);
+		if(ctl != nil && ctl[0] == '!')
+			redraw();
+
+	rawkey := <-w.ctxt.kbd =>
+		key := kbdfilter.filter(rawkey);
+		if(key >= 0) {
+			if(statbar.prompt != nil) {
+				# In find/open input mode
+				(done, val) := statbar.key(key);
+				if(done == 1) {
+					statbar.prompt = nil;
+					if(promptmode == 2)
+						openbyname(val);
+					else {
+						searchstr = val;
+						findnext(0);
+					}
+					promptmode = 0;
+				} else if(done < 0) {
+					statbar.prompt = nil;
+					promptmode = 0;
+				}
+				redraw();
+			} else
+				handlekey(key);
+		}
+
+	p := <-w.ctxt.ptr =>
+		if(p.buttons == 0 && scrollbar.isactive()) {
+			newo := scrollbar.track(p);
+			if(newo >= 0) {
+				topline = newo;
+				redraw();
+			}
+		} else if(scrollbar.isactive()) {
+			newo := scrollbar.track(p);
+			if(newo >= 0) {
+				topline = newo;
+				redraw();
+			}
+		} else if(p.buttons & 16r18) {
+			# Scroll wheel (button 8 = up, 16 = down)
+			scrollbar.total = nlines;
+			scrollbar.visible = vislines;
+			scrollbar.origin = topline;
+			topline = scrollbar.wheel(p.buttons, 3);
+			redraw();
+		} else if(p.buttons & 4) {
+			# Button 3 — context menu
+			if(menu != nil) {
+				n := menu.show(w.image, p.xy, w.ctxt.ptr);
+				case n {
+				0 =>	startopen();
+				1 =>	goback();
+				2 =>	goforward();
+				3 =>	startfind();
+				4 =>	topline = 0; redraw();
+				5 =>	scrollbottom(); redraw();
+				6 =>	exit;
+				}
+			}
+		} else if(p.buttons & 3) {
+			# Click on status bar → open prompt
+			sth := widgetmod->statusheight();
+			sbr := Rect((w.image.r.min.x, w.image.r.max.y - sth), w.image.r.max);
+			if(sbr.contains(p.xy)) {
+				startopen();
+			} else {
+				sr := scrollrect();
+				if(sr.contains(p.xy)) {
+					scrollbar.total = nlines;
+					scrollbar.visible = vislines;
+					scrollbar.origin = topline;
+					newo := scrollbar.event(p);
+					if(newo >= 0) {
+						topline = newo;
+						redraw();
+					}
+				}
+			}
+			# B1 in text area: future selection support
+		} else
+			w.pointer(*p);
+	}
+}
+
+handlekey(key: int)
+{
+	case key {
+	Kup =>
+		if(topline > 0) topline--;
+	Kdown =>
+		if(topline < nlines - vislines) topline++;
+	Kpgup =>
+		topline -= vislines;
+		if(topline < 0) topline = 0;
+	Kpgdown =>
+		topline += vislines;
+		clamptop();
+	Khome =>
+		topline = 0;
+	Kend =>
+		scrollbottom();
+	'q' or 'Q' =>
+		exit;
+	'o' & 16r1f =>	# Ctrl-O
+		startopen();
+	'f' & 16r1f =>	# Ctrl-F
+		startfind();
+	'g' & 16r1f =>	# Ctrl-G
+		findnext(0);
+	'q' & 16r1f =>	# Ctrl-Q
+		exit;
+	'n' =>
+		findnext(0);
+	'N' =>
+		findnext(1);	# reverse
+	* =>
+		return;
+	}
+	redraw();
+}
+
+startfind()
+{
+	promptmode = 1;
+	statbar.prompt = "Find: ";
+	statbar.buf = "";
+	redraw();
+}
+
+startopen()
+{
+	promptmode = 2;
+	statbar.prompt = "Man: ";
+	statbar.buf = "";
+	redraw();
+}
+
+openbyname(input: string)
+{
+	if(input == nil || len input == 0)
+		return;
+	# Tokenize: optional section numbers then title
+	(nil, toks) := sys->tokenize(input, " \t");
+	if(toks == nil)
+		return;
+	secs: list of string;
+	title := "";
+	for(; toks != nil; toks = tl toks) {
+		t := hd toks;
+		if(isdir("/man/" + t))
+			secs = t :: secs;
+		else
+			title = t;
+	}
+	if(title == "") {
+		statbar.right = "no title given";
+		return;
+	}
+	found := lookupman(secs, title);
+	if(found != nil)
+		loadpage(hd found);
+	else
+		statbar.right = title + " not found";
+}
+
+findnext(reverse: int)
+{
+	if(searchstr == nil || len searchstr == 0)
+		return;
+	lsearch := tolower(searchstr);
+	start := topline + 1;
+	if(reverse)
+		start = topline - 1;
+	for(i := 0; i < nlines; i++) {
+		idx: int;
+		if(reverse)
+			idx = (start - i + nlines) % nlines;
+		else
+			idx = (start + i) % nlines;
+		if(idx < 0 || idx >= nlines)
+			continue;
+		line := lines[idx];
+		if(line == nil)
+			continue;
+		text := linetext(line);
+		if(contains(tolower(text), lsearch)) {
+			topline = idx;
+			clamptop();
+			statbar.left = pagetitle;
+			statbar.right = sys->sprint("found at line %d", idx + 1);
+			return;
+		}
+	}
+	statbar.right = "not found";
+}
+
+# Extract plain text from a ManLine
+linetext(ml: ManLine): string
+{
+	s := "";
+	for(; ml != nil; ml = tl ml) {
+		(nil, txt) := hd ml;
+		s += txt.text;
+	}
+	return s;
+}
+
+loadpage(path: string)
+{
+	parser := load Parseman Parseman->PATH;
+	if(parser == nil) {
+		sys->fprint(stderr, "wm/man: cannot load Parseman: %r\n");
+		return;
+	}
+	err := parser->init();
+	if(err != nil) {
+		sys->fprint(stderr, "wm/man: %s\n", err);
+		return;
+	}
+
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil) {
+		sys->fprint(stderr, "wm/man: cannot open %s: %r\n", path);
+		return;
+	}
+
+	# Push current page to history
+	if(nlines > 0 && history != nil) {
+		# history already has current; skip
+	}
 
 	em := rfont.width("m");
 	en := rfont.width("n");
-	metrics = Parseman->Metrics(490, 80, em, en, 14, 40, 20);
-
-	tkclient->init();
-	buts := Tkclient->Resize | Tkclient->Hide;
-	winctl: chan of string;
-	(window, winctl) = tkclient->toplevel(ctxt, nil, "Man", buts);
-	nav := chan of string;
-	plumb := chan of string;
-	tk->namechan(window, nav, "nav");
-	tk->namechan(window, plumb, "plumb");
-	for(tc:=0; tc<len tkconfig; tc++)
-		tkcmd(window, tkconfig[tc]);
-	if ((err := tkcmd(window, "variable lasterror")) != nil) {
-		sys->fprint(sys->fildes(2), "man: tk initialization failed: %s\n", err);
-		raise "fail:tk";
+	# Calculate page width from window if available, else use default
+	pw := 600;
+	if(w != nil && w.image != nil) {
+		sw := widgetmod->scrollwidth();
+		pw = w.image.r.dx() - sw - MARGIN * 2;
 	}
-	fittoscreen(window);
-	tkcmd(window, "update");
-	mktags();
+	m := Parseman->Metrics(pw, 96, em, en, rfont.height, em * 3, em * 2);
+	datachan := chan of list of (int, Parseman->Text);
+	spawn parser->parseman(fd, m, 0, ref V, datachan);
 
-	vw := int tkcmd(window, ".view.t cget -actwidth") - 10;
-	if (vw <= 0)
-		vw = 1;
-	metrics.pagew = vw;
-
-	linechan := chan of list of (int, Text);
-	man->loadsections(nil);
-
-	pidc := chan of int;
-
-	if (argv != nil) {
-		if (hd argv == "-f") {
-			first: ref History;
-			for (argv = tl argv; argv != nil; argv = tl argv) {
-				hnode := ref History.Go(history, nil, "", "", "", hd argv);
-				if (history != nil)
-					history.next = hnode;
-				history = hnode;
-				if (first == nil)
-					first = history;
-			}
-			history = first;
-		} else
-			history = ref History.Search(nil, nil, "", "", "", argv);
+	# Collect parsed lines
+	nlines = 0;
+	for(;;) {
+		line := <-datachan;
+		if(line == nil)
+			break;
+		if(nlines >= len lines) {
+			newlines := array[len lines * 2] of ManLine;
+			newlines[0:] = lines;
+			lines = newlines;
+		}
+		ml := line;
+		lines[nlines] = ml;
+		nlines++;
 	}
 
-	if (history == nil)
-		history = ref History.Go(nil, nil, "", "", "", MANPATH);
+	topline = 0;
+	pagetitle = path;
+	# Extract short title from path like /man/1/man → man(1)
+	(nil, parts) := sys->tokenize(path, "/");
+	if(parts != nil) {
+		sec := "";
+		name := "";
+		for(; parts != nil; parts = tl parts) {
+			p := hd parts;
+			if(p == "man")
+				continue;
+			if(sec == "")
+				sec = p;
+			else
+				name = p;
+		}
+		if(name != "" && sec != "")
+			pagetitle = name + "(" + sec + ")";
+		else if(name != "")
+			pagetitle = name;
+	}
+	w.settitle("man — " + pagetitle);
+	statbar.left = pagetitle;
+	statbar.right = sys->sprint("%d lines", nlines);
+	writemanstate();
+}
 
-	setbuttons();
-	spawn printman(pidc, linechan, history);
-	layoutpid := <- pidc;
-	tkclient->onscreen(window, nil);
-	tkclient->startinput(window, "kbd"::"ptr"::nil);
-	for (;;) alt {
-	s := <-window.ctxt.kbd =>
-		tk->keyboard(window, s);
-	s := <-window.ctxt.ptr =>
-		tk->pointer(window, *s);
-	s := <-window.ctxt.ctl or
-	s = <-window.wreq or
-	s = <-winctl =>
-		e := tkclient->wmctl(window, s);
-		if (e == nil && s[0] == '!') {
-			topline := tkcmd(window, ".view.t yview");
-			(nil, toptoks) := sys->tokenize(topline, " ");
-			if (toptoks != nil)
-				history.topline = hd toptoks;
-			vw = int tkcmd(window, ".view.t cget -actwidth") - 10;
-			if (vw <= 0)
-				vw = 1;
-			if (vw != metrics.pagew) {
-				if (layoutpid != -1)
-					kill(layoutpid);
-				metrics.pagew = vw;
-				tkcmd(window, ".view.t delete 1.0 end");
-				tkcmd(window, "update");
-				spawn printman(pidc, linechan, history);
-				layoutpid = <- pidc;
+goback()
+{
+	if(history == nil)
+		return;
+	path := hd history;
+	history = tl history;
+	# save current page for forward
+	loadpage(path);
+	redraw();
+}
+
+goforward()
+{
+	if(histfwd == nil)
+		return;
+	path := hd histfwd;
+	histfwd = tl histfwd;
+	loadpage(path);
+	redraw();
+}
+
+# ---------- Rendering ----------
+
+textrect(): Rect
+{
+	r := w.image.r;
+	sth := widgetmod->statusheight();
+	sw := widgetmod->scrollwidth();
+	return Rect((r.min.x + sw + MARGIN, r.min.y + MARGIN),
+		    (r.max.x - MARGIN, r.max.y - sth));
+}
+
+scrollrect(): Rect
+{
+	r := w.image.r;
+	sth := widgetmod->statusheight();
+	return Rect((r.min.x, r.min.y), (r.min.x + widgetmod->scrollwidth(), r.max.y - sth));
+}
+
+redraw()
+{
+	screen := w.image;
+	if(screen == nil)
+		return;
+
+	r := screen.r;
+	ZP := Point(0, 0);
+
+	# Clear background
+	screen.draw(r, bgcolor, nil, ZP);
+
+	# Calculate text area
+	tr := textrect();
+	fh := rfont.height;
+	maxvrows := tr.dy() / fh;
+	if(maxvrows < 1)
+		maxvrows = 1;
+	vislines = maxvrows;
+
+	# Draw text lines
+	y := tr.min.y;
+	for(i := topline; i < nlines && (y + fh) <= tr.max.y; i++) {
+		line := lines[i];
+		if(line == nil) {
+			y += fh;
+			continue;
+		}
+		drawmanline(screen, tr, y, line);
+		y += fh;
+	}
+
+	# Update and draw scrollbar
+	sr := scrollrect();
+	scrollbar.resize(sr);
+	scrollbar.total = nlines;
+	scrollbar.visible = vislines;
+	scrollbar.origin = topline;
+	scrollbar.draw(screen);
+
+	# Status bar
+	sth := widgetmod->statusheight();
+	statbar.resize(Rect((r.min.x, r.max.y - sth), (r.max.x, r.max.y)));
+	statbar.draw(screen);
+
+	screen.flush(Draw->Flushnow);
+}
+
+drawmanline(screen: ref Image, tr: Rect, y: int, ml: ManLine)
+{
+	ZP := Point(0, 0);
+	x := tr.min.x;
+	for(; ml != nil; ml = tl ml) {
+		(indent, txt) := hd ml;
+		# indent > 0 is an absolute position; 0 means continue from current x
+		if(indent > 0)
+			x = tr.min.x + indent;
+		if(x >= tr.max.x)
+			break;
+
+		# Choose font and colour based on text attributes
+		f := rfont;
+		col := fgcolor;
+		if(txt.heading > 0) {
+			f = bfont;
+			col = hdcolor;
+		} else {
+			case txt.font {
+			Parseman->FONT_BOLD =>
+				f = bfont;
+			Parseman->FONT_ITALIC =>
+				col = dimcolor;
 			}
 		}
-	line := <- linechan =>
-		if (line == nil) {
-			# layout done
-			if (history.topline != "") {
-				topline := tkcmd(window, ".view.t yview");
-				(nil, toptoks) := sys->tokenize(topline, " ");
-				if (toptoks != nil)
-					if (hd toptoks == "0")
-						tkcmd(window, ".view.t yview moveto " + history.topline);
-			}
-			tkcmd(window, "update");
-		} else
-			setline(line);
-	go := <- nav =>
-		topline := tkcmd(window, ".view.t yview");
-		(nil, toptoks) := sys->tokenize(topline, " ");
-		if (toptoks != nil)
-			history.topline = hd toptoks;
-		case go[0] {
-		'f' =>
-			# forward
-			history = history.next;
-			setbuttons();
-			if (layoutpid != -1)
-				kill(layoutpid);
-			tkcmd(window, ".view.t delete 1.0 end");
-			tkcmd(window, "update");
-			spawn printman(pidc, linechan, history);
-			layoutpid = <- pidc;
-		'b' =>
-			# back
-			history = history.prev;
-			setbuttons();
-			if (layoutpid != -1)
-				kill(layoutpid);
-			tkcmd(window, ".view.t delete 1.0 end");
-			tkcmd(window, "update");
-			spawn printman(pidc, linechan, history);
-			layoutpid = <- pidc;
-		'e' or 'l' =>
-			t := "";
-			if (go[0] == 'l') {
-				# link
-				t = go[1:];
-			} else {
-				# entry
-				t = tkcmd(window, ".input.e get");
-				for (i := 0; i < len t; i++)
-					if (!(t[i] == ' ' || t[i] == '\t'))
-						break;
-				if (i == len t)
-					break;
-				t = t[i:];
-				if (t[0] == '/' || t[0] == '?') {
-					search(t);
+		if(txt.link != nil && len txt.link > 0)
+			col = lkcolor;
+
+		# Clip text to visible width
+		text := txt.text;
+		maxw := tr.max.x - x;
+		if(maxw <= 0)
+			break;
+		tw := f.width(text);
+		if(tw > maxw) {
+			# Truncate to fit
+			for(k := len text; k > 0; k--) {
+				if(f.width(text[:k]) <= maxw) {
+					text = text[:k];
 					break;
 				}
 			}
-			(n, toks) := sys->tokenize(t, " \t");
-			if (n == 0)
+			tw = f.width(text);
+		}
+		screen.text(Point(x, y), col, ZP, f, text);
+		x += tw;
+	}
+}
+
+V.textwidth(nil: self ref V, text: Parseman->Text): int
+{
+	f := rfont;
+	case text.font {
+	Parseman->FONT_BOLD =>
+		f = bfont;
+	}
+	if(text.heading > 0)
+		f = bfont;
+	if(f == nil)
+		return len text.text;
+	return f.width(text.text);
+}
+
+# ---------- Man page lookup ----------
+
+lookupman(sections: list of string, title: string): list of string
+{
+	if(sections == nil) {
+		# Search all sections
+		fd := sys->open("/man", Sys->OREAD);
+		if(fd == nil)
+			return nil;
+		(n, dirs) := sys->dirread(fd);
+		for(i := 0; i < n; i++) {
+			name := dirs[i].name;
+			if(len name == 1 && name[0] >= '0' && name[0] <= '9')
+				sections = name :: sections;
+		}
+	}
+
+	ltitle := tolower(title);
+	found: list of string;
+	for(; sections != nil; sections = tl sections) {
+		sec := hd sections;
+		idxpath := "/man/" + sec + "/INDEX";
+		fd := sys->open(idxpath, Sys->OREAD);
+		if(fd == nil)
+			continue;
+		bio := bufio->fopen(fd, Sys->OREAD);
+		if(bio == nil)
+			continue;
+		while((line := bio.gets('\n')) != nil) {
+			if(len line > 0 && line[len line - 1] == '\n')
+				line = line[:len line - 1];
+			(nf, fields) := sys->tokenize(line, " \t");
+			if(nf < 2)
 				continue;
-			h := ref History.Search(history, nil, "", "", "", toks);
-			history.next = h;
-			history = h;
-			setbuttons();
-			if (layoutpid != -1)
-				kill(layoutpid);
-			tkcmd(window, ".view.t delete 1.0 end");
-			tkcmd(window, "update");
-			spawn printman(pidc, linechan, history);
-			layoutpid = <- pidc;
-		'g' =>
-			# goto file
-			h := ref History.Go(history, nil, "", "", "", go[1:]);
-			history.next = h;
-			history = h;
-			setbuttons();
-			if (layoutpid != 0)
-				kill(layoutpid);
-			tkcmd(window, ".view.t delete 1.0 end");
-			tkcmd(window, "update");
-			spawn printman(pidc, linechan, history);
-			layoutpid = <- pidc;
+			key := tolower(hd fields);
+			file := hd tl fields;
+			if(key == ltitle)
+				found = "/man/" + sec + "/" + file :: found;
 		}
-	p := <- plumb =>
-		if (!doplumb)
+	}
+	return found;
+}
+
+# ---------- Helpers ----------
+
+clamptop()
+{
+	max := nlines - vislines;
+	if(max < 0)
+		max = 0;
+	if(topline > max)
+		topline = max;
+	if(topline < 0)
+		topline = 0;
+}
+
+scrollbottom()
+{
+	topline = nlines - vislines;
+	if(topline < 0) topline = 0;
+}
+
+isdir(path: string): int
+{
+	(ok, d) := sys->stat(path);
+	if(ok < 0)
+		return 0;
+	return d.mode & Sys->DMDIR;
+}
+
+tolower(s: string): string
+{
+	r := "";
+	for(i := 0; i < len s; i++) {
+		c := s[i];
+		if(c >= 'A' && c <= 'Z')
+			c += 'a' - 'A';
+		r[len r] = c;
+	}
+	return r;
+}
+
+contains(s, sub: string): int
+{
+	if(len sub > len s)
+		return 0;
+	for(i := 0; i <= len s - len sub; i++) {
+		if(s[i:i + len sub] == sub)
+			return 1;
+	}
+	return 0;
+}
+
+# ---------- Theme ----------
+
+themelistener(ch: chan of int)
+{
+	fd := sys->open("/mnt/ui/event", Sys->OREAD);
+	if(fd == nil)
+		return;
+	buf := array[256] of byte;
+	for(;;) {
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
 			break;
-		(nil, l) := sys->tokenize(p, " ");
-		x := int hd l;
-		y := int hd tl l;
-		index := tkcmd(window, ".view.t index @"+string x+","+string y);		
-		selindex := tkcmd(window, ".view.t tag ranges sel");
-		insel := 0;
-		if(selindex != "")
-			insel = tkcmd(window, ".view.t compare sel.first <= "+index)=="1" &&
-				tkcmd(window, ".view.t compare sel.last >= "+index)=="1";
-		text := "";
-		attr := "";
-		if (insel)
-			text = tkcmd(window, ".view.t get sel.first sel.last");
-		else{
-			# have line with text in it
-			# now extract whitespace-bounded string around click
-			(nil, w) := sys->tokenize(index, ".");
-			charno := int hd tl w;
-			left := tkcmd(window, ".view.t index {"+index+" linestart}");
-			right := tkcmd(window, ".view.t index {"+index+" lineend}");
-			line := tkcmd(window, ".view.t get "+left+" "+right);
-			for(i:=charno; i>0; --i)
-				if(line[i-1]==' ' || line[i-1]=='\t')
-					break;
-			for(j:=charno; j<len line; j++)
-				if(line[j]==' ' || line[j]=='\t')
-					break;
-			text = line[i:j];
-			attr = "click="+string (charno-i);
-		}
-		msg := ref Plumbmsg->Msg(
-			"WmMan",
-			"",
-			"",
-			"text",
-			attr,
-			array of byte text);
-		plumber->msg.send();
-
-	layoutpid = <- pidc =>
-		;
+		ev := string buf[0:n];
+		# INFR-28: reset client-side fid offset so the next read on
+		# this streaming queue starts at 0 (otherwise the kernel
+		# applies the accumulated offset to the server reply and
+		# truncates / EOFs on the third read onward).
+		sys->seek(fd, big 0, Sys->SEEKSTART);
+		if(len ev >= 6 && ev[0:6] == "theme ")
+			ch <-= 1;
 	}
 }
 
-search(pat: string)
+reloadcolors()
 {
-	dir: string;
-	start: string;
-	if (pat[0] == '/') {
-		dir = "-forwards";
-		start = history.searchend;
-	} else {
-		dir = "-backwards";
-		start = history.searchstart;
+	lucitheme := load Lucitheme Lucitheme->PATH;
+	if(lucitheme != nil) {
+		th := lucitheme->gettheme();
+		bgcolor = display.color(th.editbg);
+		fgcolor = display.color(th.edittext);
+		hdcolor = display.color(th.text);
+		lkcolor = display.color(th.accent);
+		dimcolor = display.color(th.dim);
 	}
-	pat = pat[1:];
-	if (start == "")
-		start = "1.0";
-	r := tkcmd(window, ".view.t search " + dir + " -- " + tk->quote(pat) + " " + start);
-	if (r != nil) {
-		history.searchstart = r;
-		history.searchend = r + "+" + string len pat + "c";
-		tkcmd(window, ".view.t tag remove sel 1.0 end");
-		tkcmd(window, ".view.t tag add sel " + history.searchstart + " " + history.searchend);
-		tkcmd(window, ".view.t see " + r);
-		tkcmd(window, "update");
-	}
+	widgetmod->retheme(display);
+	wmclient->retheme(w);
+	if(menumod != nil)
+		menumod->retheme(display);
 }
 
-setbuttons()
+# ---------- Timer ----------
+
+timer(c: chan of int, ms: int)
 {
-	if (history.prev == nil)
-		tkcmd(window, ".input.back configure -state disabled");
-	else
-		tkcmd(window, ".input.back configure -state normal");
-	if (history.next == nil)
-		tkcmd(window, ".input.forward configure -state disabled");
-	else
-		tkcmd(window, ".input.forward configure -state normal");
+	for(;;) {
+		sys->sleep(ms);
+		c <-= 1;
+	}
 }
 
-dolayout(linechan: chan of list of (int, Text), path: string)
+# ---------- Veltro real-file IPC ----------
+
+initmandir()
+{
+	mkdirq("/tmp/veltro");
+	mkdirq(MAN_DIR);
+}
+
+mkdirq(path: string)
 {
 	fd := sys->open(path, Sys->OREAD);
-	if (fd == nil) {
-		layouterror(linechan, sys->sprint("cannot open file %s: %r", path));
+	if(fd != nil) {
+		fd = nil;
 		return;
 	}
-	w: ref W;
-	parser->parseman(fd, metrics, 0, w, linechan);
+	fd = sys->create(path, Sys->OREAD, Sys->DMDIR | 8r755);
+	fd = nil;
 }
 
-printman(pidc: chan of int, linechan: chan of list of (int, Text), h: ref History)
+writemanstate()
 {
-	pidc <-= sys->pctl(0, nil);
-	args: list of string;
-	pick hp := h {
-		Search =>
-			args = hp.search;
-		Go =>
-			dolayout(linechan, hp.path);
-			pidc <-= -1;
-			return;
+	state := sys->sprint("page %s\n", pagetitle);
+	state += sys->sprint("lines %d\n", nlines);
+	state += sys->sprint("topline %d\n", topline);
+	state += sys->sprint("visible %d\n", vislines);
+	if(searchstr != nil && len searchstr > 0)
+		state += sys->sprint("search %s\n", searchstr);
+
+	# Plain text of visible lines for AI context
+	view := sys->sprint("Man page: %s\n", pagetitle);
+	view += sys->sprint("Lines %d-%d of %d\n\n", topline + 1, min(topline + vislines, nlines), nlines);
+	end := topline + vislines;
+	if(end > nlines)
+		end = nlines;
+	for(i := topline; i < end; i++) {
+		line := lines[i];
+		if(line != nil)
+			view += linetext(line);
+		view += "\n";
 	}
-	sections: list of string;
-	argstext := "";
-	addsections := 1;
-	keywords: list of string;
-	for (; args != nil; args = tl args) {
-		arg := hd args;
-		if (arg == nil)
-			continue;
-		if (addsections && !isint(trimdot(arg))) {
-			addsections = 0;
-			keywords = args;
-		}
-		if (addsections)
-			sections = arg :: sections;
-		argstext = argstext + " " + arg;
-	}
-	manpages := man->getfiles(sections, keywords);
-	pagelist := sortpages(manpages);
-	if (len pagelist == 1) {
-		(nil, path, nil) := hd pagelist;
-		dolayout(linechan, path);
-		pidc <-= -1;
+
+	writestatefile(MAN_DIR + "/state", state);
+	writestatefile(MAN_DIR + "/view", view);
+}
+
+writestatefile(path, data: string)
+{
+	fd := sys->create(path, Sys->OWRITE, 8r666);
+	if(fd == nil)
 		return;
-	}
+	b := array of byte data;
+	sys->write(fd, b, len b);
+	fd = nil;
+}
 
-	tt := Text(Parseman->FONT_ROMAN, 0, "Search:", 1, nil);
-	at := Text(Parseman->FONT_BOLD, 0, argstext, 0, nil);
-	linechan <-= (0, tt)::(0, at)::nil;
-	tt.text = "";
-	linechan <-= (0, tt)::nil;
+checkctlfile(): int
+{
+	cmd := readrmfile(MAN_DIR + "/ctl");
+	if(cmd == nil || cmd == "")
+		return 0;
 
-	if (pagelist == nil) {
-		donet := Text(Parseman->FONT_ROMAN, 0, "No matches", 0, nil);
-		linechan <-= (INDENT, donet) :: nil;
-		linechan <-= nil;
-		pidc <-= -1;
-		return;
-	}
+	(nil, toks) := sys->tokenize(cmd, " \t\n");
+	if(toks == nil)
+		return 0;
 
-	linelist: list of list of Text;
-	pathlist: list of Text;
-	
-	maxkwlen := 0;
-	comma := Text(Parseman->FONT_ROMAN, 0, ", ", 0, "");
-	for (; pagelist != nil; pagelist = tl pagelist) {
-		(n, p, kwl) := hd pagelist;
-		l := 0;
-		keywords: list of Text = nil;
-		for (; kwl != nil; kwl = tl kwl) {
-			kw := hd kwl;
-			kwt := Text(Parseman->FONT_ITALIC, GOATTR, kw, 0, p);
-			nt := Text(Parseman->FONT_ROMAN, GOATTR, "(" + string n + ")", 0, p);
-			l += textwidth(kwt) + textwidth(nt);
-			if (keywords != nil) {
-				l += textwidth(comma);
-				keywords = nt :: kwt :: comma :: keywords;
-			} else
-				keywords = nt :: kwt :: nil;
+	verb := hd toks;
+	toks = tl toks;
+
+	case verb {
+	"open" =>
+		# open [section] title  OR  open /path/to/file
+		if(toks == nil)
+			return 0;
+		arg0 := hd toks;
+		if(len arg0 > 0 && arg0[0] == '/') {
+			# Direct file path
+			loadpage(arg0);
+			return 1;
 		}
-		if (l > maxkwlen)
-			maxkwlen = l;
-		linelist = keywords :: linelist;
-		ptext := Text(Parseman->FONT_ROMAN, GOATTR, p, 0, "");
-		pathlist = ptext :: pathlist;
-	}
-
-	for (; pathlist != nil; (pathlist, linelist) = (tl pathlist, tl linelist)) {
-		line := (10 + INDENT + maxkwlen, hd pathlist) :: nil;
-		for (ll := hd linelist; ll != nil; ll = tl ll) {
-			litem := hd ll;
-			if (tl ll == nil)
-				line = (INDENT, litem) :: line;
+		# Look up by section + title
+		secs: list of string;
+		title := "";
+		for(; toks != nil; toks = tl toks) {
+			t := hd toks;
+			if(isdir("/man/" + t))
+				secs = t :: secs;
 			else
-				line = (0, litem) :: line;
+				title = t;
 		}
-		linechan <-= line;
-	}
-	linechan <-= nil;
-	pidc <-= -1;
-}
-
-layouterror(linechan: chan of list of (int, Text), msg: string)
-{
-	text := "ERROR: " + msg;
-	t := Text(Parseman->FONT_ROMAN, 0, text, 0, nil);
-	linechan <-= (0, t)::nil;
-	linechan <-= nil;
-}
-
-loaderr(modname: string)
-{
-	sys->print("cannot load %s module: %r\n", modname);
-	raise "fail:init";
-}
-
-W.textwidth(nil: self ref W, text: Text): int
-{
-	return textwidth(text);
-}
-
-textwidth(text: Text): int
-{
-	f: ref Font;
-	if (text.heading == 1)
-		f = h1font;
-	else if (text.heading == 2)
-		f = h2font;
-	else {
-		case text.font {
-		Parseman->FONT_ROMAN =>
-			f = rfont;
-		Parseman->FONT_BOLD =>
-			f = bfont;
-		Parseman->FONT_ITALIC =>
-			f = ifont;
+		if(title == "")
+			return 0;
+		found := lookupman(secs, title);
+		if(found != nil) {
+			loadpage(hd found);
+			return 1;
+		}
+	"scroll" =>
+		if(toks == nil)
+			return 0;
+		arg0 := hd toks;
+		case arg0 {
+		"up" =>
+			topline -= vislines;
+			if(topline < 0) topline = 0;
+		"down" =>
+			topline += vislines;
+			clamptop();
+		"top" =>
+			topline = 0;
+		"bottom" =>
+			scrollbottom();
 		* =>
-			return 8 * len text.text;
-		}
-	}
-	return draw->f.width(text.text);
-}
-
-lnum := 0;
-
-setline(line: list of (int, Text))
-{
-	tabstr := "";
-	linestr := "";
-	lastoff := 0;
-	curfont := Parseman->FONT_ROMAN;
-	curlink := "";
-	curgtag := "";
-	curheading := 0;
-	fonttext := "";
-
-	for (l := line; l != nil; l = tl l) {
-		(offset, nil) := hd l;
-		if (offset != 0) {
-			lastoff = offset;
-			if (tabstr != "")
-				tabstr[len tabstr] = ' ';
-			tabstr = tabstr + string offset;
-		}
-	}
-	# fudge up tabs for rest of line
-	if (lastoff != 0)
-		tabstr = tabstr + " " + string lastoff + " " + string (lastoff + INDENT);
-	ttag := "";
-	gtag := "";
-	if (tabstr != nil)
-		ttag = tabtag(tabstr) + " ";
-
-	for (l = line; l != nil; l = tl l) {
-		(offset, text) := hd l;
-		gtag = "";
-		if (text.link != nil) {
-			if (text.attr & GOATTR)
-				gtag = gotag(text.link) + " ";
-			else {
-				gtag = linktag(text.link) + " ";
+			# numeric line number
+			(n, nil) := str->toint(arg0, 10);
+			if(n > 0) {
+				topline = n - 1;
+				clamptop();
 			}
 		}
-		if (offset != 0)
-			fonttext[len fonttext] = '\t';
-		if (text.font != curfont || text.link != curlink || text.heading != curheading || gtag != curgtag) {
-			# need to change tags
-			linestr = linestr + " " + tk->quote(fonttext) + " {" + ttag + curgtag + fonttag(curfont, curheading) + "}";
-			ttag = "";
-			curgtag = gtag;
-			fonttext = "";
-			curfont = text.font;
-			curlink = text.link;
-			curheading = text.heading;
-		}
-		fonttext = fonttext + text.text;
-	}
-	if (fonttext != nil)
-		linestr = linestr + " " + tk->quote(fonttext) + " {" + ttag + curgtag + fonttag(curfont, curheading) + "}";
-	tkcmd(window, ".view.t insert end " + linestr);
-	tkcmd(window, ".view.t insert end {\n}");
-	# only update on every other line
-	if (lnum++ & 1)
-		tkcmd(window, "update");
-}
-
-mktags()
-{
-	tkcmd(window, ".view.t tag configure ROMAN -font " + ROMAN);
-	tkcmd(window, ".view.t tag configure BOLD -font " + BOLD);
-	tkcmd(window, ".view.t tag configure ITALIC -font " + ITALIC);
-	tkcmd(window, ".view.t tag configure H1 -font " + HEADING1);
-	tkcmd(window, ".view.t tag configure H2 -font " + HEADING2);
-}
-
-fonttag(font, heading: int): string
-{
-	if (heading == 1)
-		return "H1";
-	if (heading == 2)
-		return "H2";
-	case font {
-	Parseman->FONT_ROMAN =>
-		return "ROMAN";
-	Parseman->FONT_BOLD =>
-		return "BOLD";
-	Parseman->FONT_ITALIC =>
-		return "ITALIC";
-	}
-	return nil;
-}
-
-nexttag := 0;
-lasttabstr := "";
-lasttagname := "";
-
-tabtag(tabstr: string): string
-{
-	if (tabstr == lasttabstr)
-		return lasttagname;
-	lasttagname = "TAB" + string nexttag++;
-	lasttabstr = tabstr;
-	tkcmd(window, ".view.t tag configure " + lasttagname + " -tabs " + tk->quote(tabstr));
-	return lasttagname;
-}
-
-# optimise this!
-gotag(path: string): string
-{
-	cmd := "{send nav g" + path + "}";
-	name := "GO" + string nexttag++;
-	tkcmd(window, ".view.t tag bind " + name + " <ButtonRelease-1> +" + cmd);
-	tkcmd(window, ".view.t tag configure " + name + " -fg green");
-	return name;
-}
-
-# and this!
-linktag(search: string): string
-{
-	cmd := tk->quote("send nav l" + search);
-	name := "LN" + string nexttag++;
-	tkcmd(window, ".view.t tag bind " + name + " <ButtonRelease-1> +" + cmd);
-	tkcmd(window, ".view.t tag configure " + name + " -fg green");
-	return name;
-}
-
-isint(s: string): int
-{
-	for (i := 0; i < len s; i++)
-		if (s[i] < '0' || s[i] > '9')
+		writemanstate();
+		return 1;
+	"find" =>
+		if(toks == nil)
 			return 0;
-	return 1;
-}
-
-kill(pid: int)
-{
-	fd := sys->open("/prog/" + string pid + "/ctl", Sys->OWRITE);
-	if (fd != nil)
-		sys->fprint(fd, "kill");
-}
-
-revsortuniq(strlist: list of string): list of string
-{
-	strs := array [len strlist] of string;
-	for (i := 0; strlist != nil; (i, strlist) = (i+1, tl strlist))
-		strs[i] = hd strlist;
-
-	# simple sort (ascending)
-	for (i = 0; i < len strs - 1; i++) {
-		for (j := i+1; j < len strs; j++)
-			if (strs[i] < strs[j])
-				(strs[i], strs[j]) = (strs[j], strs[i]);
+		# Join remaining tokens as search string
+		searchstr = hd toks;
+		for(toks = tl toks; toks != nil; toks = tl toks)
+			searchstr += " " + hd toks;
+		findnext(0);
+		return 1;
 	}
-
-	# construct list (result is descending)
-	r: list of string;
-	prev := "";
-	for (i = 0; i < len strs; i++) {
-		if (strs[i] != prev) {
-			r = strs[i] :: r;
-			prev = strs[i];
-		}
-	}
-	return r;
+	return 0;
 }
 
-sortpages(pagelist: list of (int, string, string)): list of (int, string, list of string)
+readrmfile(path: string): string
 {
-	pages := array [len pagelist] of (int, string, string);
-	for (i := 0; pagelist != nil; (i, pagelist) = (i+1, tl pagelist))
-		pages[i] = hd pagelist;
-
-	for (i = 0; i < len pages - 1; i++) {
-		for (j := i+1; j < len pages; j++) {
-			(nil, nil, ipath) := pages[i];
-			(nil, nil, jpath) := pages[j];
-			if (ipath > jpath)
-				(pages[i], pages[j]) = (pages[j], pages[i]);
-		}
-	}
-
-	r: list of (int, string, list of string);
-	filecmds: list of string;
-	lastfile := "";
-	lastsect := 0;
-	for (i = 0; i < len pages; i++) {
-		(section, cmd, file) := pages[i];
-		if (lastfile == "") {
-			lastfile = file;
-			lastsect = section;
-		}
-
-		if (file != lastfile) {
-			r = (lastsect, lastfile, filecmds) :: r;
-			lastfile = file;
-			lastsect = section;
-			filecmds = nil;
-		}
-		filecmds = cmd :: filecmds;
-	}
-	if (filecmds != nil)
-		r = (lastsect, lastfile, revsortuniq(filecmds)) :: r;
-	return r;
-}
-
-fittoscreen(win: ref Tk->Toplevel)
-{
-	Point, Rect: import draw;
-	if (win.image == nil || win.image.screen == nil)
-		return;
-	r := win.image.screen.image.r;
-	scrsize := Point((r.max.x - r.min.x), (r.max.y - r.min.y));
-	bd := int tkcmd(win, ". cget -bd");
-	winsize := Point(int tkcmd(win, ". cget -actwidth") + bd * 2, int tkcmd(win, ". cget -actheight") + bd * 2);
-	if (winsize.x > scrsize.x)
-		tkcmd(win, ". configure -width " + string (scrsize.x - bd * 2));
-	if (winsize.y > scrsize.y)
-		tkcmd(win, ". configure -height " + string (scrsize.y - bd * 2));
-	actr: Rect;
-	actr.min = Point(int tkcmd(win, ". cget -actx"), int tkcmd(win, ". cget -acty"));
-	actr.max = actr.min.add((int tkcmd(win, ". cget -actwidth") + bd*2,
-				int tkcmd(win, ". cget -actheight") + bd*2));
-	(dx, dy) := (actr.dx(), actr.dy());
-	if (actr.max.x > r.max.x)
-		(actr.min.x, actr.max.x) = (r.max.x - dx, r.max.x);
-	if (actr.max.y > r.max.y)
-		(actr.min.y, actr.max.y) = (r.max.y - dy, r.max.y);
-	if (actr.min.x < r.min.x)
-		(actr.min.x, actr.max.x) = (r.min.x, r.min.x + dx);
-	if (actr.min.y < r.min.y)
-		(actr.min.y, actr.max.y) = (r.min.y, r.min.y + dy);
-	tkcmd(win, ". configure -x " + string actr.min.x + " -y " + string actr.min.y);
-}
-
-tkcmd(top: ref Tk->Toplevel, s: string): string
-{
-	e := tk->cmd(top, s);
-	if (e != nil && e[0] == '!')
-		sys->print("tk error %s on '%s'\n", e, s);
-	return e;
-}
-
-trimdot(s: string): string
-{
-	for(i := 0; i < len s; i++)
-		if(s[i] == '.')
-			return s[0: i];
+	fd := sys->open(path, Sys->OREAD);
+	if(fd == nil)
+		return nil;
+	buf := array[4096] of byte;
+	n := sys->read(fd, buf, len buf);
+	fd = nil;
+	if(n <= 0)
+		return nil;
+	s := string buf[0:n];
+	# Truncate file to consume the command
+	fd = sys->create(path, Sys->OWRITE, 8r666);
+	fd = nil;
+	# Strip trailing whitespace
+	while(len s > 0 && (s[len s - 1] == '\n' || s[len s - 1] == ' ' || s[len s - 1] == '\t'))
+		s = s[:len s - 1];
 	return s;
+}
+
+min(a, b: int): int
+{
+	if(a < b) return a;
+	return b;
 }

@@ -8,13 +8,11 @@ include "draw.m";
 include "string.m";
 	str: String;
 
-include "lists.m";
+include "ftrans.m";
+	ftrans: Ftrans;
 
 include "env.m";
 	env: Env;
-
-include "workdir.m";
-	wd: Workdir;
 
 include "arg.m";
 
@@ -29,51 +27,27 @@ init(nil: ref Draw->Context, args: list of string)
 	str = load String String->PATH;
 	if(str == nil)
 		fail(sys->sprint("cannot load %s: %r", String->PATH));
-	env = load Env Env->PATH;
-	if(env == nil)
-		fail(sys->sprint("cannot load %s: %r", Env->PATH));
-	wd= load Workdir Workdir->PATH;
-	if(wd== nil)
-		fail(sys->sprint("cannot load %s: %r", Workdir->PATH));
 	arg := load Arg Arg->PATH;
 	if(arg == nil)
 		fail(sys->sprint("cannot load %s: %r", Arg->PATH));
 
 	arg->init(args);
-	arg->setusage("os [-DrcCbn] [-d dir] [-m mount] [-N nice] command [arg...]");
+	arg->setusage("os [-d dir] [-m mount] [-n] [-N nice] [-b] command [arg...]");
 
-	emuroot := env->getenv("emuroot");
-
-	debug := 0;
 	nice := 0;
 	nicearg: string;
-	workdir:= "";
+	workdir := "";
 	mntpoint := "";
 	foreground := 1;
-	convpaths := 1;
-
-	# Root ourselves in the of our cwd inside of Inferno by default
-	rooted := 1;
-	usecwd := 1;
+	translate := 0;
+	noexe := 0;
 
 	while((opt := arg->opt()) != 0) {
 		case opt {
-		'D' =>
-			# Turn on debugging 
-			debug = 1;
-		'r' =>
-			# Don't root at Inferno /
-			rooted = 0;
-		'c' =>
-			# Don't use cwd - will run at Inferno / if -r isn't set
-			usecwd = 0;
-		'C' =>
-			# Don't convert arguments starting with / to $emuroot^/$arg
-			convpaths = 0;
 		'd' =>
 			workdir = arg->earg();
-			usecwd = 0;
-			rooted = 0;
+		'E' =>
+			noexe = 1;
 		'm' =>
 			mntpoint = arg->earg();
 		'n' =>
@@ -81,6 +55,10 @@ init(nil: ref Draw->Context, args: list of string)
 		'N' =>
 			nice = 1;
 			nicearg = sys->sprint(" %q", arg->earg());
+		't' =>
+			translate = 1;
+		'T' =>
+			translate = 2;
 		'b' =>
 			foreground = 0;
 		* =>
@@ -88,9 +66,21 @@ init(nil: ref Draw->Context, args: list of string)
 		}
 	}
 	args = arg->argv();
-	if(args == nil)
+	if (args == nil)
 		arg->usage();
 	arg = nil;
+	if(translate){
+		if(workdir == nil)
+			workdir=".";
+		(workdir, args) = translatenames(args, workdir, translate>1);
+	}
+	if(noexe){
+		s := sys->sprint("os -d %q", workdir);
+		for(; args != nil; args = tl args)
+			s += sys->sprint(" %q", hd args);
+		sys->print("%s\n", s);
+		return;
+	}
 
 	sys->pctl(Sys->FORKNS, nil);
 	sys->bind("#p", "/prog", Sys->MREPL);		# don't worry if it fails
@@ -115,45 +105,7 @@ init(nil: ref Draw->Context, args: list of string)
 	if(nice && sys->fprint(cfd, "nice%s", nicearg) < 0)
 		sys->fprint(sys->fildes(2), "os: warning: can't set nice priority: %r\n");
 
-	# Convert arguments beginning with / to $emuroot^/$arg
-	if(convpaths && len args > 1){
-		lists := load Lists Lists->PATH;
-		if(lists == nil)
-			raise "cannot load lists";
-
-		nargs: list of string;
-		argv0 := hd args;
-		args = tl args;
-
-		for(; args != nil; args = tl args){
-			a := hd args;
-			if(a[0] == '/')
-				a = emuroot + a;
-
-			nargs = a :: nargs;
-		}
-
-		args = lists->reverse(nargs);
-		args = argv0 :: args;
-	}
-
-	if(debug){
-		sys->fprint(sys->fildes(2), "Args to cmd:\n");
-		for(argv := args; argv != nil; argv = tl argv)
-			sys->fprint(sys->fildes(2), "\t%s\n", hd argv);
-	}
-
-	if(usecwd)
-		workdir = wd->init();
-
-	# If $emuroot is not set, don't care, directory is checked below
-	if(rooted)
-		workdir = emuroot + workdir;
-
-	if(debug)
-		sys->fprint(sys->fildes(2), "Workdir = %s\n", workdir);
-
-	if(workdir != nil && sys->fprint(cfd, "dir %s", workdir) < 0)
+	if(workdir != nil && sys->fprint(cfd, "dir %q", workdir) < 0)
 		fail(sys->sprint("cannot set cwd %q: %r", workdir));
 
 	if(foreground && sys->fprint(cfd, "killonclose") < 0)
@@ -168,16 +120,19 @@ init(nil: ref Draw->Context, args: list of string)
 		if((fromcmd := sys->open(dir+"/data", sys->OREAD)) == nil)
 			fail(sys->sprint("cannot open %s/data for reading: %r", dir));
 		if((errcmd := sys->open(dir+"/stderr", sys->OREAD)) == nil)
-			fail(sys->sprint("cannot open %s/stderr for reading: %r", dir));
+			sys->fprint(sys->fildes(2),  "warning: cannot open %s/stderr for reading: %r\n", dir);
 
 		spawn copy(sync := chan of int, nil, sys->fildes(0), tocmd);
 		pid := <-sync;
 		tocmd = nil;
 
-		spawn copy(sync, nil, errcmd, sys->fildes(2));
-		epid := <-sync;
-		sync = nil;
-		errcmd = nil;
+		epid := -1;
+		if(errcmd != nil){
+			spawn copy(sync, nil, errcmd, sys->fildes(2));
+			epid = <-sync;
+			sync = nil;
+			errcmd = nil;
+		}
 	
 		spawn copy(nil, done := chan of int, fromcmd, sys->fildes(1));
 		fromcmd = nil;
@@ -212,6 +167,78 @@ init(nil: ref Draw->Context, args: list of string)
 	}
 }
 
+translatenames(args: list of string, dir: string, all: int): (string, list of string)
+{
+	ftrans = load Ftrans Ftrans->PATH;
+	if(ftrans == nil)
+		fail(sys->sprint("cannot load %s: %r", Ftrans->PATH));
+	env = load Env Env->PATH;
+	ftrans->init(nil, nil :: str->unquoted(env->getenv("ftrans")));
+	arg0 := translate1(hd args);
+	args = tl args;
+	dir = translate1(dir);
+	if(all){
+		na: list of string;
+		for(; args != nil; args = tl args){
+			a := hd args;
+			a = translate1(a);
+			na = a :: na;
+		}
+		for(args = nil; na != nil; na = tl na)
+			args = hd na :: args;
+	}
+	return (dir, arg0 :: args);
+}
+
+translate1(p: string): string
+{
+	if(p == nil)
+		return nil;
+	if(! (p[0] == '/' || len p > 1 && p[0:2] == "./" || (sys->stat(p).t0 != -1)))
+		return p;
+	if(hasdriveletter(p) == 0){
+		(t, e) := ftrans->translate(p);
+		if(t == nil)
+			fail(sys->sprint("%s: %s", p, e));
+		if(prefix(t, "#")){
+			t = t[1:];
+			if(!prefix(t, "U"))
+				fail(p+": not in local filesystem space");
+			t = t[1:];
+			if(t == nil || prefix(t, "/")){
+				# #U/... - rooted at $emuroot
+				root := str->unquoted(env->getenv("emuroot"));
+				if(len root != 1)
+					fail(sys->sprint("funny $emuroot %q", env->getenv("emuroot")));
+				t = hd root+t;
+			}else if(prefix(t, "*")){
+				# #U*/ - rooted at /
+				t = t[1:];
+			}else if(!hasdriveletter(t))
+				fail("unknown kind of dev: #U"+t);
+		}
+		p = t;
+	}
+	if(hasdriveletter(p)){
+		for(i := 0; i < len p; i++)
+			if(p[i] == '/')
+				p[i] = '\\';
+			else if(p[i] == '␣')	# HACK!
+				p[i] = ' ';
+	}
+	return p;
+}
+
+hasdriveletter(p: string): int
+{
+	return  len p > 1 && (p[0] >= 'a' && p[0] <= 'z' || p[0] >= 'A' && p[0] <= 'Z') && p[1] == ':' && (len p == 2 || (p[2] == '/' || p[2] == '\\'));
+}
+
+prefix(s, p: string): int
+{
+	return len s >= len p && s[0:len p] == p;
+}
+
 copy(sync, done: chan of int, f, t: ref Sys->FD)
 {
 	if(sync != nil)
@@ -232,7 +259,8 @@ copy(sync, done: chan of int, f, t: ref Sys->FD)
 kill(pid: int)
 {
 	fd := sys->open("#p/"+string pid+"/ctl", sys->OWRITE);
-	sys->fprint(fd, "kill");
+	if(fd != nil)
+		sys->fprint(fd, "kill");
 }
 
 fail(msg: string)

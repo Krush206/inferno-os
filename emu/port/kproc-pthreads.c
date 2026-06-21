@@ -1,8 +1,12 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE	/* for pthread_getattr_np on Linux */
+#endif
+
 #include	"dat.h"
 #include	"fns.h"
 #include	"error.h"
 
-#undef _POSIX_C_SOURCE 
+#undef _POSIX_C_SOURCE
 #undef getwd
 
 #include	<unistd.h>
@@ -12,12 +16,19 @@
 #include	<errno.h>
 #include	<semaphore.h>
 
-#ifdef __NetBSD__
+#if defined(__NetBSD__) || defined(LINUX_ARM) || defined(LINUX_AMD64) || defined(LINUX_ARM64) || defined(__BIONIC__)
 #include	<sched.h>
+/* pthread_yield is a glibc-era non-POSIX extension that Bionic dropped
+ * in NDK r28+. sched_yield is the POSIX standard and identical in
+ * semantics. Macro-redirect so the existing call site below builds
+ * everywhere. */
 #define pthread_yield() (sched_yield())
+#endif
+
+#ifdef __NetBSD__
 #define PTHREAD_STACK_MIN ((size_t)sysconf(_SC_THREAD_STACK_MIN))
 #endif
-#define pthread_yield() (sched_yield())
+
 
 
 typedef struct Osdep Osdep;
@@ -90,14 +101,6 @@ tramp(void *arg)
 	os->self = pthread_self();
 	if(pthread_setspecific(prdakey, arg))
 		panic("set specific data failed in tramp\n");
-	if(0){
-		pthread_attr_t attr;
-		memset(&attr, 0, sizeof(attr));
-		pthread_getattr_np(pthread_self(), &attr);
-		size_t s;
-		pthread_attr_getstacksize(&attr, &s);
-		print("stack size = %d\n", s);
-	}
 	p->func(p->arg);
 	pexit("{Tramp}", 0);
 	return nil;
@@ -145,7 +148,8 @@ kproc(char *name, void (*func)(void*), void *arg, int flags)
 	p->env->gid = up->env->gid;
 	kstrdup(&p->env->user, up->env->user);
 
-	strcpy(p->text, name);
+	strncpy(p->text, name, KNAMELEN-1);
+	p->text[KNAMELEN-1] = '\0';
 
 	p->func = func;
 	p->arg = arg;
@@ -168,7 +172,14 @@ kproc(char *name, void (*func)(void*), void *arg, int flags)
 		pthread_attr_setstacksize(&attr, 512*1024);	/* could be a parameter */
 	else if(KSTACK > 0)
 		pthread_attr_setstacksize(&attr, (KSTACK < PTHREAD_STACK_MIN? PTHREAD_STACK_MIN: KSTACK)+1024);
+#ifndef __BIONIC__
+	/* Bionic does not implement pthread_attr_setinheritsched (the
+	 * inherit-sched attribute is unsupported; new threads inherit
+	 * scheduling from the creator by default, which is exactly what
+	 * PTHREAD_INHERIT_SCHED requests). Skip on Bionic — no behavioural
+	 * change, just removing a missing function reference. Phase 0. */
 	pthread_attr_setinheritsched(&attr, PTHREAD_INHERIT_SCHED);
+#endif
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	if(pthread_create(&thread, &attr, tramp, p))
 		panic("thr_create failed\n");
@@ -212,6 +223,26 @@ kprocinit(Proc *p)
 		panic("key_create failed");
 	if(pthread_setspecific(prdakey, p))
 		panic("set specific thread data failed");
+}
+
+/*
+ * Set thread-local Proc for a new thread (prdakey must already exist).
+ * Used by GUI worker threads that need their own Proc.
+ */
+void
+kprocsetup(Proc *p)
+{
+	Osdep *os;
+
+	os = malloc(sizeof(*os));
+	if(os == nil)
+		panic("kprocsetup: no memory");
+	os->self = pthread_self();
+	sem_init(&os->sem, 0, 0);
+	p->os = os;
+
+	if(pthread_setspecific(prdakey, p))
+		panic("kprocsetup: pthread_setspecific failed");
 }
 
 void

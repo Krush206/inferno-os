@@ -13,7 +13,19 @@ enum {
 };
 
 char *rootdir =		ROOT;
-char *shell =		"Nt/386/bin/rcsh.exe";	/* Path relative to root */
+char *shell =		"Nt/amd64/bin/rcsh.exe";	/* Path relative to root */
+
+/*
+ * shellinit() — no-op on Windows. The MKSHELL hook that Posix.c uses
+ * to override /bin/sh on Termux-style environments has no analogue on
+ * Windows (mk here invokes rcsh.exe directly, not via PATH lookup),
+ * so this stub satisfies the prototype called from main.c on every
+ * platform that builds mk.
+ */
+void
+shellinit(void)
+{
+}
 
 typedef struct Child	Child;
 
@@ -24,8 +36,6 @@ struct Child {
 
 static Child child[Nchild];
 
-extern char **environ;
-
 DWORD WINAPI writecmd(LPVOID a);
 
 void
@@ -34,7 +44,7 @@ readenv(void)
 	char **p, *s;
 	Word *w;
 
-	for(p = environ; *p; p++){
+	for(p = _environ; *p; p++){
 		s = shname(*p);
 		if(*s == '=') {
 			*s = 0;

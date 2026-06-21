@@ -1,21 +1,21 @@
-<../../mkconfig
+<$ROOT/mkconfig
 
 DIRS=\
 	convcs\
 	crypt\
 	ecmascript\
 	encoding\
+	git\
 	ida\
-	print\
 	spki\
-	strokes\
-	styxconv\
-	usb\
 	w3c\
 
 TARG=\
+	acmewin.dis\
 	arg.dis\
-	arrays.dis\
+	testing.dis\
+	textwidget.dis\
+	xenithwin.dis\
 	asn1.dis\
 	attrdb.dis\
 	attrhash.dis\
@@ -30,24 +30,24 @@ TARG=\
 	crc.dis\
 	csv.dis\
 	daytime.dis\
-	db.dis\
 	dbm.dis\
-	dbsrv.dis\
 	debug.dis\
+	mermaid.dis\
 	deflate.dis\
 	devpointer.dis\
-	dhcpclient.dis\
 	dial.dis\
-	dialog.dis\
+	dialnorm.dis\
 	dict.dis\
 	dis.dis\
 	diskblocks.dis\
 	disks.dis\
-	dividers.dis\
 	env.dis\
+	ethcrypto.dis\
+	ethrpc.dis\
 	ether.dis\
 	exception.dis\
 	factotum.dis\
+	fdrun.dis\
 	filepat.dis\
 	format.dis\
 	fsfilter.dis\
@@ -55,60 +55,56 @@ TARG=\
 	fsproto.dis\
 	hash.dis\
 	html.dis\
+	imap.dis\
 	imageremap.dis\
+	mailparse.dis\
 	inflate.dis\
-	iobuf.dis\
 	ip.dis\
 	ipattr.dis\
-	ir.dis\
-	irsage.dis\
-	irsim.dis\
-	itslib.dis\
 	json.dis\
+	llmclient.dis\
+	wirefmt.dis\
 	keyset.dis\
 	libc.dis\
 	libc0.dis\
 	lists.dis\
 	lock.dis\
 	login.dis\
-	man.dis\
+	lucitheme.dis\
 	memfs.dis\
-	mpeg.dis\
+	menu.dis\
+	menuhit.dis\
+	midi.dis\
 	msgio.dis\
-	nametree.dis\
 	names.dis\
+	nametree.dis\
 	newns.dis\
 	ninep.dis\
 	oldauth.dis\
-	palm.dis\
-	palmdb.dis\
-	palmfile.dis\
 	parseman.dis\
-	plumbmsg.dis\
 	plumbing.dis\
+	plumbmsg.dis\
 	pop3.dis\
-	popup.dis\
-	powerman.dis\
 	profile.dis\
 	pslib.dis\
-	quicktime.dis\
 	rabin.dis\
 	rand.dis\
 	random.dis\
 	readdir.dis\
+	readavif.dis\
 	readgif.dis\
 	readjpg.dis\
 	readpicfile.dis\
 	readpng.dis\
+	readsvg.dis\
+	readwebp.dis\
 	readxbitmap.dis\
 	regex.dis\
+	regexutils.dis\
 	registries.dis\
+	rfc3339.dis\
 	rfc822.dis\
-	riff.dis\
-	scoretable.dis\
-	scsiio.dis\
 	secstore.dis\
-	selectfile.dis\
 	sets.dis\
 	sets32.dis\
 	sexprs.dis\
@@ -117,6 +113,7 @@ TARG=\
 	sort.dis\
 	ssl.dis\
 	string.dis\
+	stripe.dis\
 	strinttab.dis\
 	styx.dis\
 	styxflush.dis\
@@ -124,125 +121,178 @@ TARG=\
 	styxpersist.dis\
 	styxservers.dis\
 	tables.dis\
-	tabs.dis\
 	tftp.dis\
 	timers.dis\
-	tcl_utils.dis\
-	tcl_tk.dis\
-	tcl_symhash.dis\
-	tcl_string.dis\
-	tcl_strhash.dis\
-	tcl_stack.dis\
-	tcl_modhash.dis\
-	tcl_list.dis\
-	tcl_io.dis\
-	tcl_inthash.dis\
-	tcl_core.dis\
-	tcl_calc.dis\
-	tkclient.dis\
 	titlebar.dis\
 	translate.dis\
+	twofa.dis\
+	twofaslot.dis\
 	ubfa.dis\
 	url.dis\
 	vac.dis\
 	venti.dis\
 	virgil.dis\
-	volume.dis\
 	wait.dis\
+	wallet.dis\
 	watchvars.dis\
+	web.dis\
+	outlinefont.dis\
+	pdf.dis\
+	webclient.dis\
+	widget.dis\
 	winplace.dis\
 	wmclient.dis\
 	wmlib.dis\
 	wmsrv.dis\
 	workdir.dis\
 	writegif.dis\
+	x402.dis\
 	xml.dis\
-	zip.dis\
+
 
 MODULES=
-
-SYSMODULES= \
+SYSMODULES=\
+	9p.m\
+	acmewin.m\
+	agentlib.m\
+	arg.m\
+	xenithwin.m\
+	asn1.m\
+	attrdb.m\
+	auth9.m\
+	bloomfilter.m\
 	bufio.m\
-	cci.m\
+	cfg.m\
+	cfgfile.m\
+	complete.m\
+	crc.m\
+	crypt.m\
+	csv.m\
 	daytime.m\
-	db.m\
+	dbm.m\
 	debug.m\
 	devpointer.m\
+	dial.m\
+	dialnorm.m\
 	dict.m\
+	dis.m\
+	diskblocks.m\
+	disks.m\
 	draw.m\
+	encoding.m\
 	env.m\
+	ethcrypto.m\
+	ethrpc.m\
+	ether.m\
 	exception.m\
 	factotum.m\
+	fdrun.m\
 	filepat.m\
 	filter.m\
+	format.m\
 	fslib.m\
+	fsproto.m\
 	hash.m\
 	html.m\
+	imap.m\
 	imagefile.m\
-	inflate.m\
-	ir.m\
+	ip.m\
+	ipattr.m\
+	ipints.m\
+	json.m\
+	llmclient.m\
+	wirefmt.m\
 	keyring.m\
+	keyset.m\
+	libc.m\
+	libc0.m\
+	lists.m\
 	lock.m\
+	lucitheme.m\
 	man.m\
-	mpeg.m\
+	math.m\
+	memfs.m\
+	menu.m\
+	outlinefont.m\
+	pdf.m\
+	menuhit.m\
+	midi.m\
+	msgio.m\
+	names.m\
 	newns.m\
-	palmfile.m\
+	oldauth.m\
+	pkcs.m\
+	plumbing.m\
 	plumbmsg.m\
-	powerman.m\
-	prefab.m\
+	pop3.m\
+	profile.m\
 	pslib.m\
-	quicktime.m\
+	rabin.m\
 	rand.m\
 	readdir.m\
 	regex.m\
-	riff.m\
-	scoretable.m\
+	regexutils.m\
+	registries.m\
+	rfc3339.m\
+	rfc822.m\
+	secstore.m\
 	security.m\
+	sets.m\
+	sets32.m\
+	sexprs.m\
 	sh.m\
 	smtp.m\
-	srv.m\
+	sort.m\
+	ssl3.m\
+	sslsession.m\
 	string.m\
+	stripe.m\
+	strinttab.m\
 	styx.m\
+	styxflush.m\
+	styxlib.m\
+	styxpersist.m\
 	styxservers.m\
 	sys.m\
 	tables.m\
+	testing.m\
+	textwidget.m\
+	tftp.m\
+	timers.m\
+	titlebar.m\
+	tk.m\
+	translate.m\
+	twofa.m\
+	twofaslot.m\
+	ubfa.m\
 	url.m\
+	vac.m\
 	venti.m\
-	volume.m\
+	wait.m\
+	wallet.m\
 	watchvars.m\
+	web.m\
+	webclient.m\
+	widget.m\
+	webget.m\
+	winplace.m\
+	wmclient.m\
 	wmlib.m\
+	wmsrv.m\
+	workdir.m\
+	x402.m\
+	xml.m\
+
+
 
 DISBIN=$ROOT/dis/lib
 
 <$ROOT/mkfiles/mkdis
 <$ROOT/mkfiles/mksubdirs
 
-plumbing.dis:N: plumbing.m
-plumber.dis:N: plumbing.m
+$DISBIN/arg.dis: arg.dis
+	rm -f $DISBIN/arg.dis && cat arg.dis > $DISBIN/arg.dis
 
-ip.dis: $ROOT/module/ip.m
-ether.dis:	$ROOT/module/ether.m
-attrdb.dis attrhash.dis:	$ROOT/module/attrdb.m
-ipattr.dis:	$ROOT/module/attrdb.m $ROOT/module/ip.m $ROOT/module/ipattr.m
-tftp.dis:	$ROOT/module/tftp.m
-registries.dis:	$ROOT/module/registries.m
-keyset.dis:	$ROOT/module/keyset.m
-auth9.dis: $ROOT/module/auth9.m
-factotum.dis:	$ROOT/module/factotum.m
-sexprs.dis:	$ROOT/module/sexprs.m
-dbm.dis: $ROOT/module/dbm.m
-names.dis: $ROOT/module/names.m
-disks.dis: $ROOT/module/disks.m
-scsiio.dis:	$ROOT/module/scsiio.m
-dhcpclient.dis:	$ROOT/module/dhcp.m
-ubfa.dis: $ROOT/module/ubfa.m
-secstore.dis:	$ROOT/module/secstore.m
-ida.dis:	$ROOT/module/ida.m
-rfc822.dis:	$ROOT/module/rfc822.m
-csv.dis: $ROOT/module/csv.m
-json.dis: $ROOT/module/json.m
-lists.dis:	$ROOT/module/lists.m
-vac.dis:	$ROOT/module/vac.m $ROOT/module/venti.m
-dial.dis:	$ROOT/module/dial.m
-styxflush.dis:	$ROOT/module/styxflush.m
-msgio.dis:	$ROOT/module/msgio.m
+$DISBIN/readdir.dis: readdir.dis
+	rm -f $DISBIN/readdir.dis && cat readdir.dis > $DISBIN/readdir.dis
+	

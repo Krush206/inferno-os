@@ -2,13 +2,14 @@
 #include "isa.h"
 #include "interp.h"
 #include "raise.h"
-#include "xalloc.h"
 #include <kernel.h>
 
 #define	A(r)	*((Array**)(r))
 
 Module*	modules;
 int	dontcompile;
+
+static uchar *codeend;	/* bounds limit for Dis bytecode parsing */
 
 static int
 operand(uchar **p)
@@ -17,6 +18,8 @@ operand(uchar **p)
 	uchar *cp;
 
 	cp = *p;
+	if(cp >= codeend)
+		return -1;
 	c = cp[0];
 	switch(c & 0xC0) {
 	case 0x00:
@@ -26,21 +29,25 @@ operand(uchar **p)
 		*p = cp+1;
 		return c|~0x7F;
 	case 0x80:
+		if(cp+2 > codeend)
+			return -1;
 		*p = cp+2;
 		if(c & 0x20)
 			c |= ~0x3F;
 		else
 			c &= 0x3F;
-		return (c<<8)|cp[1];		
+		return (c<<8)|cp[1];
 	case 0xC0:
+		if(cp+4 > codeend)
+			return -1;
 		*p = cp+4;
 		if(c & 0x20)
 			c |= ~0x3F;
 		else
 			c &= 0x3F;
-		return (c<<24)|(cp[1]<<16)|(cp[2]<<8)|cp[3];		
+		return (c<<24)|(cp[1]<<16)|(cp[2]<<8)|cp[3];
 	}
-	return 0;	
+	return 0;
 }
 
 static ulong
@@ -50,6 +57,8 @@ disw(uchar **p)
 	uchar *c;
 
 	c = *p;
+	if(c+4 > codeend)
+		return 0;
 	v  = c[0] << 24;
 	v |= c[1] << 16;
 	v |= c[2] << 8;
@@ -61,15 +70,15 @@ disw(uchar **p)
 double
 canontod(ulong v[2])
 {
-	union { double d; unsigned long ul[2]; } a;
+	union { double d; u32int ul[2]; } a;
 	a.d = 1.;
 	if(a.ul[0]) {
-		a.ul[0] = v[0];
-		a.ul[1] = v[1];
+		a.ul[0] = (u32int)v[0];
+		a.ul[1] = (u32int)v[1];
 	}
 	else {
-		a.ul[1] = v[0];
-		a.ul[0] = v[1];
+		a.ul[1] = (u32int)v[0];
+		a.ul[0] = (u32int)v[1];
 	}
 	return a.d;
 }
@@ -143,6 +152,7 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 
 	istream = code;
 	isp = &istream;
+	codeend = code + length;
 
 	m = malloc(sizeof(Module));
 	if(m == nil)
@@ -162,7 +172,7 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 	case SMAGIC:
 		siglen = operand(isp);
 		n = length-(*isp-code);
-		if(n < 0 || siglen > n){
+		if(siglen < 0 || n < 0 || siglen > n){
 			kwerrstr("corrupt signature");
 			goto bad;
 		}
@@ -193,6 +203,10 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 		kwerrstr("implausible Dis file");
 		goto bad;
 	}
+	if(isize > 1024*1024 || hsize > 1024*1024 || lsize > 1024*1024) {
+		kwerrstr("implausible Dis file");
+		goto bad;
+	}
 
 	m->nprog = isize;
 	m->prog = mallocz(isize*sizeof(Inst), 0);
@@ -205,6 +219,10 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 
 	ip = m->prog;
 	for(i = 0; i < isize; i++) {
+		if(istream+2 > codeend) {
+			kwerrstr("truncated Dis file");
+			goto bad;
+		}
 		ip->op = *istream++;
 		ip->add = *istream++;
 		ip->reg = 0;
@@ -258,7 +276,7 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 	}
 	for(i = 0; i < hsize; i++) {
 		id = operand(isp);
-		if(id > hsize) {
+		if(id < 0 || id > hsize) {
 			kwerrstr("heap id range");
 			goto bad;
 		}
@@ -289,6 +307,10 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 	addr = m->origmp;
 	dasp = 0;
 	for(;;) {
+		if(istream >= codeend) {
+			kwerrstr("truncated Dis file");
+			goto bad;
+		}
 		sm = *istream++;
 		if(sm == 0)
 			break;
@@ -320,7 +342,14 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 			for(i = 0; i < n; i++) {
 				hi = disw(isp);
 				lo = disw(isp);
-				*(LONG*)si = (LONG)hi << 32 | (LONG)(ulong)lo;
+				/*
+				 * Mask the low word to 32 bits with u32int. ulong is 64-bit on
+				 * LP64 hosts, so (ulong)lo does not narrow lo, and disw() returns
+				 * the word sign-extended (its c[0]<<24 is a signed-int shift); a
+				 * low word with bit 31 set would otherwise leak 1s into the high
+				 * half of the assembled LONG.
+				 */
+				*(LONG*)si = (LONG)hi << 32 | (LONG)(u32int)lo;
 				si += sizeof(LONG);
 			}
 			break;
@@ -340,6 +369,7 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 			}
 			pt = m->type[v];
 			v = disw(isp);
+			acheck(pt->size, v);
 			h = nheap(sizeof(Array)+(pt->size*v));
 			h->t = &Tarray;
 			h->t->ref++;
@@ -376,7 +406,7 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 		}
 	}
 	mod = istream;
-	if(memchr(mod, 0, 128) == 0) {
+	if(istream >= codeend || memchr(mod, 0, codeend - istream) == 0) {
 		kwerrstr("bad module name");
 		goto bad;
 	}
@@ -385,8 +415,10 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 		kwerrstr(exNomem);
 		goto bad;
 	}
-	while(*istream++)
-		;
+	while(istream < codeend && *istream != 0)
+		istream++;
+	if(istream < codeend)
+		istream++;
 
 	l = m->ext = (Link*)malloc((lsize+1)*sizeof(Link));
 	if(l == nil){
@@ -401,8 +433,10 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 		if(de != -1)
 			pt = m->type[de];
 		mlink(m, l, istream, v, pc, pt);
-		while(*istream++)
-			;
+		while(istream < codeend && *istream != 0)
+			istream++;
+		if(istream < codeend)
+			istream++;
 	}
 	l->name = nil;
 
@@ -430,6 +464,10 @@ parsemod(char *path, uchar *code, ulong length, Dir *dir)
 			}
 			for(j = 0; j < n; j++, i1++){
 				i1->sig = disw(isp);
+				if(memchr(istream, 0, codeend - istream) == nil){
+					kwerrstr("bad dis import name");
+					goto bad;
+				}
 				i1->name = strdup((char*)istream);
 				if(i1->name == nil){
 					kwerrstr(exNomem);
@@ -569,7 +607,10 @@ freemod(Module *m)
 		free(m->type);
 	}
 	free(m->name);
-	xfree(m->prog);
+#if defined(__aarch64__) || defined(__x86_64__) || defined(_M_X64)
+	if(!m->compiled)
+#endif
+	free(m->prog);
 	free(m->path);
 	free(m->pctab);
 	if(m->ldt != nil){
@@ -611,10 +652,7 @@ unload(Module *m)
 		last = &mm->link;
 	}
 
-	if(m->rt == DYNMOD)
-		freedyncode(m);
-	else
-		destroy(m->origmp);
+	destroy(m->origmp);
 
 	destroylinks(m);
 

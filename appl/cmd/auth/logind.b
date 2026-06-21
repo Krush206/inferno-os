@@ -13,8 +13,6 @@ include "keyring.m";
 	kr: Keyring;
 	IPint: import kr;
 
-include "dial.m";
-
 include "security.m";
 	ssl: SSL;
 
@@ -64,7 +62,7 @@ init(nil: ref Draw->Context, nil: list of string)
 	kill(tpid, "kill");
 }
 
-dologin(c: ref Dial->Connection): string
+dologin(c: ref Sys->Connection): string
 {
 	ivec: array of byte;
 
@@ -80,17 +78,19 @@ dologin(c: ref Dial->Connection): string
 	name := s;
 	kr->putstring(c.dfd, name);
 
-	# get initialization vector
+	# get initialization vector (32 bytes: 20 salt + 12 nonce)
 	(ivec, err) = kr->getbytearray(c.dfd);
 	if(err != nil)
 		return "can't get initialization vector: "+err;
+	if(len ivec != 32)
+		return "bad initialization vector length";
 
 	# lookup password
 	pw := getsecret(s);
 	if(pw == nil)
 		return sys->sprint("no password entry for %s: %r", s);
-	if(len pw < Keyring->SHA1dlen)
-		return "bad password for "+s+": not SHA1 hashed?";
+	if(len pw < Keyring->SHA256dlen)
+		return "bad password for "+s+": not SHA256 hashed?";
 	userexp := getexpiry(s);
 	if(userexp < 0)
 		return sys->sprint("expiry time for %s: %r", s);
@@ -102,28 +102,28 @@ dologin(c: ref Dial->Connection): string
 	# generate alpha0 = alpha**r0 mod p
 	alphar0 := info.alpha.expmod(r0, info.p);
 
-	# start encrypting
-	pwbuf := array[8] of byte;
-	for(i := 0; i < 8; i++)
-		pwbuf[i] = pw[i] ^ pw[8+i];
-	for(i = 0; i < 4; i++)
-		pwbuf[i] ^= pw[16+i];
-	for(i = 0; i < 8; i++)
-		pwbuf[i] ^= ivec[i];
-	err = ssl->secret(c, pwbuf, pwbuf);
-	if(err != nil)
-		return "can't set ssl secret: "+err;
+	# Derive 32-byte ChaCha20-Poly1305 key from stored password hash + IV
+	# using HKDF (RFC 5869) with HMAC-SHA256:
+	#   Extract: PRK = HMAC-SHA256(salt=ivec[0:20], IKM=pw[0:32])
+	#   Expand:  key = HMAC-SHA256(PRK, "infernode login aead" || 0x01)
+	salt := ivec[0:20];
+	prk := array[Keyring->SHA256dlen] of byte;
+	kr->hmac_sha256(pw[0:Keyring->SHA256dlen], Keyring->SHA256dlen, salt, prk, nil);
+	hkdfinfo := array of byte "infernode login aead";
+	expandinput := array[len hkdfinfo + 1] of byte;
+	expandinput[0:] = hkdfinfo;
+	expandinput[len hkdfinfo] = byte 1;
+	aeadkey := array[Keyring->SHA256dlen] of byte;
+	kr->hmac_sha256(expandinput, len expandinput, prk, aeadkey, nil);
+	nonce := ivec[20:32];
 
-	if(sys->fprint(c.cfd, "alg rc4") < 0)
-		return sys->sprint("can't push alg rc4: %r");
-
-	# send P(alpha**r0 mod p)
-	if(kr->putstring(c.dfd, alphar0.iptob64()) < 0)
-		return sys->sprint("can't send (alpha**r0 mod p): %r");
-
-	# stop encrypting
-	if(sys->fprint(c.cfd, "alg clear") < 0)
-		return sys->sprint("can't clear alg: %r");
+	# Send AEAD-encrypted alpha**r0 mod p using ChaCha20-Poly1305
+	plaintext := array of byte alphar0.iptob64();
+	(ciphertext, authtag) := kr->ccpolyencrypt(plaintext, nil, aeadkey, nonce);
+	if(kr->putbytearray(c.dfd, ciphertext, len ciphertext) < 0)
+		return sys->sprint("can't send encrypted (alpha**r0 mod p): %r");
+	if(kr->putbytearray(c.dfd, authtag, len authtag) < 0)
+		return sys->sprint("can't send auth tag: %r");
 
 	# send alpha, p
 	if(kr->putstring(c.dfd, info.alpha.iptob64()) < 0 ||
@@ -144,8 +144,8 @@ dologin(c: ref Dial->Connection): string
 	err = ssl->secret(c, secret, secret);
 	if(err != nil)
 		return "can't set digest secret: "+err;
-	if(sys->fprint(c.cfd, "alg sha1") < 0)
-		return sys->sprint("can't push alg sha1: %r");
+	if(sys->fprint(c.cfd, "alg sha256") < 0)
+		return sys->sprint("can't push alg sha256: %r");
 
 	# send our public key
 	if(kr->putstring(c.dfd, kr->pktostr(kr->sktopk(info.mysk))) < 0)
@@ -161,8 +161,8 @@ dologin(c: ref Dial->Connection): string
 		return "pk name doesn't match user name";
 
 	# sign and return
-	state := kr->sha1(hisPKbuf, len hisPKbuf, nil, nil);
-	cert := kr->sign(info.mysk, userexp, state, "sha1");
+	state := kr->sha256(hisPKbuf, len hisPKbuf, nil, nil);
+	cert := kr->sign(info.mysk, userexp, state, "sha256");
 
 	if(kr->putstring(c.dfd, kr->certtostr(cert)) < 0)
 		return sys->sprint("can't send certificate: %r");
@@ -189,6 +189,10 @@ signerkey(filename: string): (ref Keyring->Authinfo, string)
 		return (nil, sys->sprint("readauthinfo %r"));
 
 	# validate signer key
+	# NOTE: The Inferno Certificate adt only has an 'exp' field;
+	# unlike X.509 Validity (which has not_before/not_after),
+	# there is no notBefore check possible here.  X.509 certificates
+	# are properly validated via x509.b:is_expired() which checks both.
 	now := daytime->now();
 	if(info.cert.exp != 0 && info.cert.exp < now)
 		return (nil, sys->sprint("signer key expired"));

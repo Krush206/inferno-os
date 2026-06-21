@@ -2,92 +2,70 @@
 implement Gui;
 
 include "common.m";
-include "tk.m";
-include "tkclient.m";
+include "wmclient.m";
+	wmclient: Wmclient;
+	Window: import wmclient;
 
-include "dialog.m";
-	dialog: Dialog;
+	widgetmod: Widget;
+	Scrollbar, Statusbar: import widgetmod;
+
+include "lucitheme.m";
 
 sys: Sys;
 
 D: Draw;
 	Font,Point, Rect, Image, Screen, Display: import D;
+	menumod: Menu;
+	Popup: import menumod;
 
 CU: CharonUtils;
 
 E: Events;
 	Event: import E;
 
-tk: Tk;
-
-tkclient: Tkclient;
 
 WINDOW, CTLS, PROG, STATUS, BORDER, EXIT: con 1 << iota;
 REQD: con ~0;
 
-cfg := array[] of {
-	(REQD,	"entry .ctlf.url -bg white -font /fonts/lucidasans/unicode.7.font -height 16"),
-	(REQD,	"button .ctlf.back -bd 1 -command {send gctl back} -state disabled -text {back} -font /fonts/lucidasans/unicode.7.font"),
-	(REQD,	"button .ctlf.stop -bd 1 -command {send gctl stop} -state disabled -text {stop} -font /fonts/lucidasans/unicode.7.font"),
-	(REQD,	"button .ctlf.fwd -bd 1 -command {send gctl fwd} -state disabled -text {next} -font /fonts/lucidasans/unicode.7.font"),
-	(REQD,	"label .status.status -bd 1 -font /fonts/lucidasans/unicode.6.font -height 14 -anchor w"),
-	(REQD,	"button .ctlf.exit -bd 1 -bitmap exit.bit -command {send wm_title exit}"),
-	(REQD,	"frame .f -bd 0"),
-	(BORDER,	".f configure -bd 2 -relief sunken"),
-	(CTLS|EXIT,	"frame .ctlf"),
-	(STATUS,	"frame .status -bd 0"),
-	(STATUS,	"frame .statussep -bg black -height 1"),
-	(STATUS,	"button .status.snarf -text snarf -command {send gctl snarfstatus} -font /fonts/charon/plain.small.font"),
-
-	(CTLS,	"bind .ctlf.url <Key-\n> {send gctl go}"),
-	(CTLS,	"bind .ctlf.url <Key-\u0003> {send gctl copyurl}"),
-	(CTLS,	"bind .ctlf.url <Key-\u0016> {send gctl pasteurl}"),
-
-#	(PROG,	"canvas .prog -bd 0 -height 20"),
-#	(PROG,	"bind .prog <ButtonPress-1> {send gctl b1p %X %Y}"),
-	(CTLS,	"pack .ctlf.back .ctlf.stop .ctlf.fwd -side left -anchor w -fill y"),
-	(CTLS,	"pack .ctlf.url -side left -padx 2 -fill x -expand 1"),
-	(EXIT,	"pack .ctlf.exit -side right -anchor e"),
-	(CTLS|EXIT,	"pack .ctlf -side top -fill x"),
-	(REQD,	"pack .f -side top -fill both -expand 1"),
-#	(PROG,	"pack .prog -side bottom -fill x"),
-	(STATUS,	"pack .status.snarf -side right"),
-	(STATUS,	"pack .status.status -side right -fill x -expand 1"),
-	(STATUS,	"pack .statussep -side top -fill x"),
-	(STATUS,	"pack .status -side bottom -fill x"),
-	(CTLS|EXIT,	"pack propagate .ctlf 0"),
-	(STATUS,		"pack propagate .status 0"),
-};
-
-framebinds := array[] of {
-	"bind .f <Key> {send gctl k %s}",
-	"bind .f <FocusOut> {send gctl focusout}",
-	"bind .f <ButtonPress-1> {grab set .f;send gctl b1p %X %Y}",
-	"bind .f <Double-ButtonPress-1> {send gctl b1p %X %Y}",
-	"bind .f <ButtonRelease-1> {grab release .f;send gctl b1r %X %Y}",
-	"bind .f <Motion-Button-1> {send gctl b1d %X %Y}",
-	"bind .f <ButtonPress-2> {send gctl b2p %X %Y}",
-	"bind .f <Double-ButtonPress-2> {send gctl b2p %X %Y}",
-	"bind .f <ButtonRelease-2> {send gctl b2r %X %Y}",
-	"bind .f <Motion-Button-2> {send gctl b2d %X %Y}",
-	"bind .f <ButtonPress-3> {send gctl b3p %X %Y}",
-	"bind .f <Double-ButtonPress-3> {send gctl b3p %X %Y}",
-	"bind .f <ButtonRelease-3> {send gctl b3r %X %Y}",
-	"bind .f <Motion-Button-3> {send gctl b3d %X %Y}",
-	"bind .f <Motion> {send gctl m %X %Y}",
-};
-
-tktop: ref Tk->Toplevel;
 mousegrabbed := 0;
 offset: Point;
 ZP: con Point(0,0);
 popup: ref Popup;
-popuptk: ref Tk->Toplevel;
 gctl: chan of string;
 drawctxt: ref Draw->Context;
+window: ref Window;
+menu: ref Menu->Popup;
 
 realwin: ref Draw->Image;
 mask: ref Draw->Image;
+
+# Statusbar state
+statbar: ref Statusbar;
+guifont: ref Font;
+curinputmode := MNONE;
+inputbuf := "";
+cururl := "";		# last URL set via seturl
+curstatus := "";	# last status set via setstatus
+
+# Keyboard escape sequence state (for filterkbd)
+kbdescstate := 0;
+kbdescarg := 0;
+
+# B2 mouse tracking
+lastbuttons := 0;
+
+# Theme change notification
+themech: chan of int;
+
+# Key codes for escape sequence parsing
+KCup:		con 16rFF52;
+KCdown:		con 16rFF54;
+KCleft:		con 16rFF51;
+KCright:	con 16rFF53;
+KChome:		con 16rFF61;
+KCend:		con 16rFF57;
+KCpgup:		con 16rFF55;
+KCpgdown:	con 16rFF56;
 
 init(ctxt: ref Draw->Context, cu: CharonUtils): ref Draw->Context
 {
@@ -95,112 +73,75 @@ init(ctxt: ref Draw->Context, cu: CharonUtils): ref Draw->Context
 	D = load Draw Draw->PATH;
 	CU = cu;
 	E = cu->E;
-	tk = load Tk Tk->PATH;
-	tkclient = load Tkclient Tkclient->PATH;
-	if(tkclient == nil)
-		raise sys->sprint("EXInternal: can't load module Tkclient: %r");
-	tkclient->init();
+	if((CU->config).dorender)
+		(CU->config).doacme = 1;
+	if((CU->config).doacme){
+		display=ctxt.display;
+		makewins();
+		progress = chan of Progressmsg;
+		pidc := chan of int;
+		spawn doacmeprogmon(pidc);
+		<- pidc;
+		return ctxt;
+	}
+	wmclient = load Wmclient Wmclient->PATH;
+	wmclient->init();
+	if (ctxt == nil)
+		ctxt = wmclient->makedrawcontext();
+	if(ctxt == nil) {
+		# Headless mode: no display available.
+		# Drain the progress channel so goproc never blocks on it.
+		progress = chan of Progressmsg;
+		pidc := chan of int;
+		spawn doacmeprogmon(pidc);
+		<-pidc;
+		return nil;
+	}
 
-	wmctl: chan of string;
-	buttons := parsebuttons((CU->config).buttons);
-	winopts := parsewinopts((CU->config).framework);
+	menumod = load Menu Menu->PATH;
 
-	(tktop, wmctl) = tkclient->toplevel(ctxt, "", (CU->config).wintitle, buttons);
-
-	ctxt = tktop.ctxt.ctxt;
+	win := wmclient->window(ctxt, "charon", Wmclient->Plain);
+	window = win;
 	drawctxt = ctxt;
-	display = ctxt.display;
+	display = win.display;
+	guifont = Font.open(display, "/fonts/combined/unicode.sans.14.font");
+	if(guifont == nil)
+		guifont = Font.open(display, "*default*");
+	if(menumod != nil) {
+		menumod->init(display, guifont);
+		menu = menumod->new(array[] of {"back", "forward", "reload", "stop", "copy URL", "paste URL", "go to URL", "home"});
+	}
+
+	# Initialise widget toolkit for statusbar
+	widgetmod = load Widget Widget->PATH;
+	if(widgetmod != nil) {
+		widgetmod->init(display, guifont);
+		statbar = Statusbar.new(Rect((0, 0), (0, 0)));
+	}
 
 	gctl = chan of string;
-	tk->namechan(tktop, gctl, "gctl");
-	tk->cmd(tktop, "pack propagate . 0");
-	filtertkcmds(tktop, winopts, cfg);
-	tkcmds(tktop, framebinds);
-	w := (CU->config).defaultwidth;
-	h := (CU->config).defaultheight;
-	tk->cmd(tktop, ". configure -width " + string w + " -height " + string h);
-	tk->cmd(tktop, "update");
-	tkclient->onscreen(tktop, nil);
-	tkclient->startinput(tktop, "kbd"::"ptr"::nil);
+	win.reshape(Rect((0, 0), (display.image.r.dx(), display.image.r.dy())));
+	win.startinput( "kbd"::"ptr"::nil);
+	win.onscreen(nil);
 	makewins();
 	mask = display.opaque;
+	themech = chan[1] of int;
+	spawn themelistener();
+
 	progress = chan of Progressmsg;
 	pidc := chan of int;
 	spawn progmon(pidc);
 	<- pidc;
-	spawn evhandle(tktop, wmctl, E->evchan);
+	spawn evhandle(win, E->evchan);
 	return ctxt;
 }
 
-parsebuttons(s: string): int
+doacmeprogmon(pidc: chan of int)
 {
-	b := 0;
-	(nil, toks) := sys->tokenize(s, ",");
-	for (;toks != nil; toks = tl toks) {
-		case hd toks {
-		"help" =>
-			b |= Tkclient->Help;
-		"resize" =>
-			b |= Tkclient->Resize;
-		"hide" =>
-			b |= Tkclient->Hide;
-		"plain" =>
-			b = Tkclient->Plain;
-		}
+	pidc <-= sys->pctl(0, nil);
+	for (;;) {
+		<- progress;
 	}
-	return b | Tkclient->Help;
-}
-
-parsewinopts(s: string): int
-{
-	b := WINDOW;
-	(nil, toks) := sys->tokenize(s, ",");
-	for (;toks != nil; toks = tl toks) {
-		case hd toks {
-		"status" =>
-			b |= STATUS;
-		"controls" or "ctls" =>
-			b |= CTLS;
-		"progress" or "prog" =>
-			b |= PROG;
-		"border" =>
-			b |= BORDER;
-		"exit" =>
-			b |= EXIT;
-		"all" =>
-			# note: "all" doesn't include 'EXIT' !
-			b |= WINDOW | STATUS | CTLS | PROG | BORDER;
-		}
-	}
-	return b;
-}
-
-filtertkcmds(top: ref Tk->Toplevel, filter: int, cmds: array of (int, string))
-{
-	for (i := 0; i < len cmds; i++) {
-		(val, cmd) := cmds[i];
-		if (val & filter) {
-			if ((e := tk->cmd(top, cmd)) != nil && e[0] == '!')
-				sys->print("tk error on '%s': %s\n", cmd, e);
-		}
-	}
-}
-
-tkcmds(top: ref Tk->Toplevel, cmds: array of string)
-{
-	for (i := 0; i < len cmds; i++)
-		if ((e := tk->cmd(top, cmds[i])) != nil && e[0] == '!')
-			sys->print("tk error on '%s': %s\n", cmds[i], e);
-}
-
-clientr(t: ref Tk->Toplevel, wname: string): Rect
-{
-	bd := int tk->cmd(t, wname + " cget -borderwidth");
-	x := bd + int tk->cmd(t, wname + " cget -actx");
-	y := bd + int tk->cmd(t, wname + " cget -acty");
-	w := int tk->cmd(t, wname + " cget -actwidth");
-	h := int tk->cmd(t, wname + " cget -actheight");
-	return Rect((x,y),(x+w,y+h));
 }
 
 progmon(pidc: chan of int)
@@ -208,7 +149,6 @@ progmon(pidc: chan of int)
 	pidc <-= sys->pctl(0, nil);
 	for (;;) {
 		msg := <- progress;
-#prprog(msg);
 		# just handle stop button for now
 		if (msg.bsid == -1) {
 			case (msg.state) {
@@ -242,178 +182,295 @@ r2s(r: Rect): string
 	return sys->sprint("%d %d %d %d", r.min.x, r.min.y, r.max.x, r.max.y);
 }
 
-winpos(t: ref Tk->Toplevel): Point
+# Filter keyboard input through escape sequence state machine.
+# Returns translated key code, or -1 if consumed (mid-sequence).
+filterkbd(c: int): int
 {
-	return (int tk->cmd(t, ". cget -actx"), int tk->cmd(t, ". cget -acty"));
+	if(c >= 16rFF00)
+		return c;
+	case kbdescstate {
+	0 =>
+		if(c == 27) {
+			kbdescstate = 1;
+			return -1;
+		}
+	1 =>
+		kbdescstate = 0;
+		if(c == '[') {
+			kbdescstate = 2;
+			kbdescarg = 0;
+			return -1;
+		}
+		# Alt+arrow keys
+		if(c == KCleft)
+			return -2;	# alt-left = back
+		if(c == KCright)
+			return -3;	# alt-right = forward
+	2 =>
+		kbdescstate = 0;
+		if(c == 'A') return E->Kup;
+		if(c == 'B') return E->Kdown;
+		if(c == 'C') return E->Kright;
+		if(c == 'D') return E->Kleft;
+		if(c == 'H') return E->Khome;
+		if(c == 'F') return E->Kend;
+		if(c >= '1' && c <= '9') {
+			kbdescarg = c - '0';
+			kbdescstate = 3;
+			return -1;
+		}
+		return -1;
+	3 =>
+		if(c == '~') {
+			kbdescstate = 0;
+			if(kbdescarg == 1 || kbdescarg == 7) return E->Khome;
+			if(kbdescarg == 4 || kbdescarg == 8) return E->Kend;
+			if(kbdescarg == 5) return E->Kpgup;
+			if(kbdescarg == 6) return E->Kpgdown;
+			return -1;
+		}
+		if(c >= '0' && c <= '9') {
+			kbdescarg = kbdescarg * 10 + (c - '0');
+			return -1;
+		}
+		kbdescstate = 0;
+		return -1;
+	}
+	return c;
 }
 
-evhandle(t: ref Tk->Toplevel, wmctl: chan of string, evchan: chan of ref Event)
+evhandle(w: ref Window, evchan: chan of ref Event)
 {
+	last : Draw->Pointer;
+	wmsize := startwmsize();
 	for(;;) {
 		ev: ref Event = nil;
-		dismisspopup := 1;
 		alt {
-		s := <-gctl =>
-			(nil, l) := sys->tokenize(s, " ");
-			case hd l {
-			"focusout" =>
-				ev = ref Event.Elostfocus;
-			"b1p" or "b1r" or "b1d" or 
-			"b2p" or "b2r" or "b2d" or 
-			"b3p" or "b3r" or "b3d" or 
-			"m" =>
-				l = tl l;
-				pt := Point(int hd l, int hd tl l);
-				pt = pt.sub(offset);
-				mtype := s2mtype(s);
-				dismisspopup = 0;
-				if(mtype == E->Mlbuttondown) {
-					tk->cmd(t, "focus .f");
-					pu := popup;
-					if (pu != nil && !pu.r.contains(pt))
-						dismisspopup = 1;
-					pu = nil;
-				}
-				ev = ref Event.Emouse(pt, mtype);
-			"k" =>
-				dismisspopup = 0;
-				k := int hd tl l;
-				if(k != 0)
-					ev = ref Event.Ekey(k);
-			"back" =>
-				ev = ref Event.Eback;
-			"stop" =>
-				ev = ref Event.Estop;
-			"fwd" =>
-				ev = ref Event.Efwd;
-			"go" =>
-				url := tk->cmd(tktop, ".ctlf.url get");
-				if (url != nil)
-					ev = ref Event.Ego(url, nil, 0, E->EGnormal);
-			"copyurl" =>
-				url := tk->cmd(tktop, ".ctlf.url get");
-				snarfput(url);
-			"pasteurl" =>
-				url := tk->quote(tkclient->snarfget());
-				tk->cmd(tktop, ".ctlf.url delete 0 end");
-				tk->cmd(tktop, ".ctlf.url insert end " + url);
-				tk->cmd(tktop, "update");
-			"snarfstatus" =>
-				url := tk->cmd(tktop, ".status.status cget -text");
-				tkclient->snarfput(url);
+		wmsz := <-wmsize =>
+			w.image = w.screen.newwindow(wmsz, Draw->Refnone, Draw->Nofill);
+			makewins();
+			ev = ref Event.Ereshape(mainwin.r);
+			offset = ZP;
+		ctl := <-w.ctl or
+		ctl = <-w.ctxt.ctl =>
+			w.wmctl(ctl);
+			if(ctl != nil && ctl[0] == '!'){
+				makewins();
+				ev = ref Event.Ereshape(mainwin.r);
+				offset = ZP;
 			}
-		s := <-t.ctxt.ctl or
-		s = <-t.wreq or
-		s = <-wmctl =>
-			case s {
-			"exit" =>
-				hidewins();
-				ev = ref Event.Equit(0);
-			"task" =>
-				if (cancelpopup())
-					evchan <-= ref Event.Edismisspopup;
-				tkclient->wmctl(t, s);
-				if(tktop.image == nil)
-					realwin = nil;
-			"help" =>
-				ev = ref Event.Ego((CU->config).helpurl, nil, 0, E->EGnormal);
-			* =>
-				if (s[0] == '!' && cancelpopup())
-					evchan <-= ref Event.Edismisspopup;
-				oldimg := t.image;
-				e := tkclient->wmctl(t, s);
-				if(s[0] == '!' && e == nil){
-					if(t.image != oldimg){
-						oldimg = nil;
-						makewins();
-						ev = ref Event.Ereshape(mainwin.r);
+		p := <-w.ctxt.ptr =>
+			if(w.pointer(*p))
+				continue;
+			if(p.buttons & 4){
+				if(menumod == nil || menu == nil)
+					continue;
+				n := menu.show(window.image, p.xy, w.ctxt.ptr);
+				case n {
+				0 => ev = ref Event.Eback;
+				1 => ev = ref Event.Efwd;
+				2 => ev = ref Event.Ego("", "_top", 0, E->EGreload);
+				3 => ev = ref Event.Estop;
+				4 =>
+					# copy URL — put current URL into snarf buffer
+					if(cururl != nil && cururl != "")
+						snarfput(cururl);
+				5 =>
+					# paste URL — get from snarf buffer and navigate
+					snarf := snarfget();
+					if(snarf != nil && snarf != "") {
+						snarf = guistrip(snarf);
+						if(snarf != "") {
+							if(!hasprefix(guitolower(snarf), "http://") &&
+							   !hasprefix(guitolower(snarf), "https://"))
+								snarf = "https://" + snarf;
+							ev = ref Event.Ego(snarf, "_top", 0, E->EGnormal);
+						}
 					}
-					offset = tk->rect(tktop, ".f", 0).min;
+				6 => startinput(MURL);
+				7 => ev = ref Event.Ego("about:blank", "_top", 0, E->EGnormal);
 				}
+			}else if(p.buttons & (8|16)) {
+				if(p.buttons & 8)
+					ev = ref Event.Escrollr(0, Point(0, -60));
+				else
+					ev = ref Event.Escrollr(0, Point(0, 60));
+			}else if(p.buttons & (32|64)) {
+				if(p.buttons & 32)
+					ev = ref Event.Escrollr(0, Point(-60, 0));
+				else
+					ev = ref Event.Escrollr(0, Point(60, 0));
+			}else {
+				pt := p.xy;
+				pt = pt.sub(offset);
+				# Distinguish B1 from B2
+				b1 := p.buttons & 1;
+				b2 := p.buttons & 2;
+				lb1 := lastbuttons & 1;
+				lb2 := lastbuttons & 2;
+				if(b2 && !lb2) {
+					# B2 down — paste-to-navigate
+					ev = ref Event.Emouse(pt, E->Mmbuttondown);
+				} else if(!b2 && lb2) {
+					# B2 up — complete paste-to-navigate
+					ev = ref Event.Emouse(pt, E->Mmbuttonup);
+				} else if(b1 && !lb1) {
+					ev = ref Event.Emouse(pt, E->Mlbuttondown);
+				} else if(!b1 && lb1) {
+					ev = ref Event.Emouse(pt, E->Mlbuttonup);
+				} else if(b1 && lb1) {
+					ev = ref Event.Emouse(pt, E->Mldrag);
+				} else if(b2 && lb2) {
+					ev = ref Event.Emouse(pt, E->Mmdrag);
+				}
+				lastbuttons = p.buttons;
+				last = *p;
 			}
-		s := <-t.ctxt.kbd =>
-			tk->keyboard(t, s);
-		s := <-t.ctxt.ptr =>
-			tk->pointer(t, *s);
-		}
-		if (dismisspopup) {
-			if (cancelpopup()) {
-				evchan <-= ref Event.Edismisspopup;
+		k := <-w.ctxt.kbd =>
+			# Filter through escape sequence parser
+			k = filterkbd(k);
+			if(k == -1)
+				continue;	# consumed mid-sequence
+
+			# If in input mode, route to statusbar
+			if(curinputmode != MNONE) {
+				if(statbar != nil) {
+					(done, val) := statbar.key(k);
+					if(done == 1) {
+						mode := curinputmode;
+						curinputmode = MNONE;
+						inputbuf = "";
+						case mode {
+						MURL =>
+							val = guistrip(val);
+							if(val != "") {
+								if(!hasprefix(guitolower(val), "http://") &&
+								   !hasprefix(guitolower(val), "https://"))
+									val = "https://" + val;
+								ev = ref Event.Ego(val, "_top", 0, E->EGnormal);
+							}
+						MLINK =>
+							n := guiatoi(val);
+							if(n > 0)
+								ev = ref Event.Efollow(n);
+						}
+					} else if(done < 0) {
+						curinputmode = MNONE;
+						inputbuf = "";
+					} else {
+						inputbuf = statbar.buf;
+					}
+					# Redraw statusbar on any input key
+					if(mainwin != nil)
+						drawstatusbar(mainwin);
+				}
+				if(ev != nil) {
+					evchan <-= ev;
+					ev = nil;
+				}
+				continue;
 			}
+
+			# Alt-arrow shortcuts (from filterkbd)
+			if(k == -2) {
+				ev = ref Event.Eback;
+			} else if(k == -3) {
+				ev = ref Event.Efwd;
+			} else {
+				ev = ref Event.Ekey(k);
+			}
+		<-themech =>
+			reloadcolors();
 		}
 		if (ev != nil)
 			evchan <-= ev;
 	}
 }
 
-s2mtype(s: string): int
+themelistener()
 {
-	mtype := E->Mmove;
-	if(s[0] == 'm')
-		mtype = E->Mmove;
-	else {
-		case s[1] {
-		'1' =>
-			case s[2] {
-			'p' => mtype = E->Mlbuttondown;
-			'r' => mtype = E->Mlbuttonup;
-			'd' => mtype = E->Mldrag;
-			}
-		'2' =>
-			case s[2] {
-			'p' => mtype = E->Mmbuttondown;
-			'r' => mtype = E->Mmbuttonup;
-			'd' => mtype = E->Mmdrag;
-			}
-		'3' =>
-			case s[2] {
-			'p' => mtype = E->Mrbuttondown;
-			'r' => mtype = E->Mrbuttonup;
-			'd' => mtype = E->Mrdrag;
-			}
-		}
+	fd := sys->open("/mnt/ui/event", Sys->OREAD);
+	if(fd == nil)
+		return;
+	buf := array[256] of byte;
+	for(;;) {
+		n := sys->read(fd, buf, len buf);
+		if(n <= 0)
+			break;
+		ev := string buf[0:n];
+		# INFR-28: reset client-side fid offset so the next read on
+		# this streaming queue starts at 0 (otherwise the kernel
+		# applies the accumulated offset to the server reply and
+		# truncates / EOFs on the third read onward).
+		sys->seek(fd, big 0, Sys->SEEKSTART);
+		if(len ev >= 6 && ev[0:6] == "theme ")
+			themech <-= 1;
 	}
-	return mtype;
+}
+
+reloadcolors()
+{
+	if(widgetmod != nil)
+		widgetmod->retheme(display);
+	if(wmclient != nil)
+		wmclient->retheme(window);
+	if(menumod != nil)
+		menumod->retheme(display);
 }
 
 makewins()
 {
-	if(tktop.image == nil)
+	if((CU->config).doacme){
+		# Use actual display width (lucifer zone) rather than defaultwidth
+		dw := display.image.r.dx();
+		if(dw < (CU->config).defaultwidth)
+			dw = (CU->config).defaultwidth;
+		mainwin = display.newimage(Rect(display.image.r.min, (dw, display.image.r.max.y)), display.image.chans, 0, D->White);
 		return;
-	screen := Screen.allocate(tktop.image, display.transparent, 0);
-	offset = tk->rect(tktop, ".f", 0).min;
-	r := tk->rect(tktop, ".f", Tk->Local);
-	realwin = screen.newwindow(r, D->Refnone, D->White);
-	realwin.origin(ZP, r.min);
-	if(realwin == nil)
-		raise sys->sprint("EXFatal: can't initialize windows: %r");
-
-	mainwin = display.newimage(realwin.r, realwin.chans, 0, D->White);
-	if(mainwin == nil)
-		raise sys->sprint("EXFatal: can't initialize windows: %r");
+		if(mainwin == nil)
+			CU->raisex(sys->sprint("EXFatal: can't initialize windows: %r"));
+	}
+	if(window.image == nil)
+		return;
+	mainwin = window.image;
+	realwin = mainwin;
 }
 
 hidewins()
 {
-	tk->cmd(tktop, ". unmap");
+	if((CU->config).doacme)
+		return;
 }
 
 snarfput(s: string)
 {
-	tkclient->snarfput(s);
+	if((CU->config).doacme)
+		return;
+	if(wmclient != nil)
+		wmclient->snarfput(s);
+}
+
+snarfget(): string
+{
+	if((CU->config).doacme || wmclient == nil)
+		return nil;
+	return wmclient->snarfget();
 }
 
 setstatus(s: string)
 {
-	tk->cmd(tktop, ".status.status configure -text " + tk->quote(s));
-	tk->cmd(tktop, "update");
+	if((CU->config).doacme)
+		return;
+	curstatus = s;
 }
 
-seturl(s: string)
+seturl(url: string)
 {
-	tk->cmd(tktop, ".ctlf.url delete 0 end");
-	tk->cmd(tktop, ".ctlf.url insert 0 " + tk->quote(s));
-	tk->cmd(tktop, "update");
+	if((CU->config).doacme)
+		return;
+	cururl = url;
+	if(window != nil && url != nil && url != "")
+		window.settitle(url);
 }
 
 auth(realm: string): (int, string, string)
@@ -437,69 +494,48 @@ sys->print("CONFIRM:%s\n", msg);
 	return -1;
 }
 
-prompt(msg, dflt: string): (int, string)
+prompt(nil, nil: string): (int, string)
 {
-	if(dialog == nil){
-		dialog = load Dialog Dialog->PATH;
-		dialog->init();
-	}
-	return (1, dialog->getstring(drawctxt, mainwin, msg));
-	# return (-1, "");
+	if((CU->config).doacme)
+		return (-1, "");
+	return (-1, "");
 }
 
-stopbutton(enable: int)
+stopbutton(nil: int)
 {
-	state: string;
-	if (enable) {
-		tk->cmd(tktop, ".ctlf.stop configure -bg red -activebackground red -activeforeground white");
-		state = "normal";
-	} else {
-		tk->cmd(tktop, ".ctlf.stop configure -bg #dddddd");
-		state = "disabled";
-	}
-	tk->cmd(tktop, ".ctlf.stop configure -state " + state + ";update");
+	if((CU->config).doacme)
+		return;
 }
 
-backbutton(enable: int)
+backbutton(nil: int)
 {
-	state: string;
-	if (enable) {
-		tk->cmd(tktop, ".ctlf.back configure -bg lime -activebackground lime -activeforeground red");
-		state = "normal";
-	} else {
-		tk->cmd(tktop, ".ctlf.back configure -bg #dddddd");
-		state = "disabled";
-	}
-	tk->cmd(tktop, ".ctlf.back configure -state " + state + ";update");
+	if((CU->config).doacme)
+		return;
 }
 
-fwdbutton(enable: int)
+fwdbutton(nil: int)
 {
-	state: string;
-	if (enable) {
-		tk->cmd(tktop, ".ctlf.fwd  configure -bg lime -activebackground lime -activeforeground red");
-		state = "normal";
-	} else {
-		tk->cmd(tktop, ".ctlf.fwd configure -bg #dddddd");
-		state = "disabled";
-	}
-	tk->cmd(tktop, ".ctlf.fwd configure -state " + state + ";update");
+	if((CU->config).doacme)
+		return;
 }
 
-flush(r: Rect)
+flush(nil: Rect)
 {
-	if(realwin != nil) {
-		oclipr := mainwin.clipr;
-		mainwin.clipr = r;
-		realwin.draw(r, mainwin, nil, r.min);
-		mainwin.clipr = oclipr;
+	if((CU->config).doacme)
+		return;
+	if(mainwin != nil) {
+		drawstatusbar(mainwin);
+		# INFR-27: window border is the wmclient frame (th.windowborder).
+		# Don't draw widget.contentborder here — it would paint th.accent
+		# over the wmclient frame and break border consistency across apps.
+		mainwin.flush(D->Flushnow);
 	}
 }
 
 clientfocus()
 {
-	tk->cmd(tktop, "focus .f");
-	tk->cmd(tktop, "update");
+	if((CU->config).doacme)
+		return;
 }
 
 exitcharon()
@@ -508,53 +544,176 @@ exitcharon()
 	E->evchan <-= ref Event.Equit(0);
 }
 
-getpopup(r: Rect): ref Popup
+tkupdate()
+{
+}
+
+getpopup(nil: Rect): ref Menu->Popup
 {
 	return nil;
-#	cancelpopup();
-##	img := screen.newwindow(r, D->White);
-#	img := display.newimage(r, screen.image.chans, 0, D->White);
-#	if (img == nil)
-#		return nil;
-#	winr := r.addpt(offset);	# race for offset
-#
-#	pos := "-x " + string winr.min.x + " -y " + string winr.min.y;
-#	(top, nil) := tkclient->toplevel(drawctxt, pos, nil, Tkclient->Plain);
-#	tk->namechan(top, gctl, "gctl");
-#	tk->cmd(top, "frame .f -bd 0 -bg white -width " + string r.dx() + " -height " + string r.dy());
-#	tkcmds(top, framebinds);
-#	tk->cmd(top, "pack .f; update");
-#	tkclient->onscreen(tktop, "onscreen");
-#	tkclient->startinput(tktop, "kbd"::"ptr"::nil);
-#	win := screen.newwindow(winr, D->Refbackup, D->White);
-#	if (win == nil)
-#		return nil;
-#	win.origin(r.min, winr.min);
-#
-#	popuptk = top;
-#	popup = ref Popup(r, img, win);
-## XXXX need to start a thread to feed mouse/kbd events from popup,
-## but we need to know when to tear it down.
-#	return popup;
 }
 
 cancelpopup(): int
 {
-	popuptk = nil;
-	pu := popup;
-	if (pu == nil)
+	if (popup == nil)
 		return 0;
-	pu.image = nil;
-	pu.window = nil;
-	pu = nil;
 	popup = nil;
 	return 1;
 }
 
-Popup.flush(p: self ref Popup, r: Rect)
+# ── Statusbar functions ──────────────────────────────────────
+
+statusbarheight(): int
 {
-	win := p.window;
-	img := p.image;
-	if (win != nil && img != nil)
-		win.draw(r, img, nil, r.min);
+	if(statbar == nil || widgetmod == nil)
+		return 0;
+	return widgetmod->statusheight();
+}
+
+drawstatusbar(dst: ref Image)
+{
+	if(statbar == nil || dst == nil)
+		return;
+	r := dst.r;
+	sth := statusbarheight();
+	if(sth <= 0)
+		return;
+	sbr := Rect((r.min.x, r.max.y - sth), r.max);
+	statbar.resize(sbr);
+	if(curinputmode != MNONE) {
+		# Input mode — prompt is already set
+		;
+	} else {
+		statbar.prompt = nil;
+		if(cururl != nil && cururl != "")
+			statbar.left = cururl;
+		else if(curstatus != nil && curstatus != "")
+			statbar.left = curstatus;
+		else
+			statbar.left = "";
+		if(linkcount > 0)
+			statbar.right = sys->sprint("%d links", linkcount);
+		else
+			statbar.right = "";
+		statbar.leftcolor = nil;
+	}
+	# The HTML renderer (layout.b) may leave dst.clipr set to f.cr, which
+	# ends exactly at the top of the status bar region.  Save and reset the
+	# clip so the status bar always draws into its own area.
+	oclipr := dst.clipr;
+	dst.clipr = dst.r;
+	statbar.draw(dst);
+	dst.clipr = oclipr;
+}
+
+startinput(mode: int)
+{
+	curinputmode = mode;
+	inputbuf = "";
+	if(statbar == nil)
+		return;
+	if(mode == MURL) {
+		statbar.prompt = "URL: ";
+		statbar.buf = "";
+		if(cururl != nil && cururl != "") {
+			inputbuf = cururl;
+			statbar.buf = cururl;
+		}
+	} else if(mode == MLINK) {
+		statbar.prompt = "Link #: ";
+		statbar.buf = "";
+	}
+	if(mainwin != nil) {
+		drawstatusbar(mainwin);
+		# INFR-27: window border is the wmclient frame (th.windowborder).
+		# Don't draw widget.contentborder here — it would paint th.accent
+		# over the wmclient frame and break border consistency across apps.
+		mainwin.flush(D->Flushnow);
+	}
+}
+
+inputmode(): int
+{
+	return curinputmode;
+}
+
+# ── String helpers ────────────────────────────────────────────
+
+guistrip(s: string): string
+{
+	i := 0;
+	while(i < len s && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n'))
+		i++;
+	j := len s;
+	while(j > i && (s[j-1] == ' ' || s[j-1] == '\t' || s[j-1] == '\n'))
+		j--;
+	if(i >= j)
+		return "";
+	return s[i:j];
+}
+
+guitolower(s: string): string
+{
+	result := "";
+	for(i := 0; i < len s; i++) {
+		c := s[i];
+		if(c >= 'A' && c <= 'Z')
+			c += 'a' - 'A';
+		result[len result] = c;
+	}
+	return result;
+}
+
+guiatoi(s: string): int
+{
+	s = guistrip(s);
+	n := 0;
+	for(i := 0; i < len s; i++) {
+		c := s[i];
+		if(c < '0' || c > '9')
+			break;
+		n = n * 10 + (c - '0');
+	}
+	return n;
+}
+
+hasprefix(s, prefix: string): int
+{
+	return len s >= len prefix && s[0:len prefix] == prefix;
+}
+
+
+startwmsize(): chan of Rect
+{
+	rchan := chan of Rect;
+	fd := sys->open("#w/wmsize", Sys->OREAD);
+	if(fd == nil)
+		return rchan;
+	sync := chan of int;
+	spawn wmsizeproc(sync, fd, rchan);
+	<-sync;
+	return rchan;
+}
+
+Wmsize: con 1+4*12;		# 'm' plus 4 12-byte decimal integers
+
+wmsizeproc(sync: chan of int, fd: ref Sys->FD, ptr: chan of Rect)
+{
+	sync <-= sys->pctl(0, nil);
+
+	b:= array[Wmsize] of byte;
+	while(sys->read(fd, b, len b) > 0){
+		p := bytes2rect(b);
+		if(p != nil)
+			ptr <-= *p;
+	}
+}
+
+bytes2rect(b: array of byte): ref Rect
+{
+	if(len b < Wmsize || int b[0] != 'm')
+		return nil;
+	x := int string b[1:13];
+	y := int string b[13:25];
+	return ref Rect((0,0), (x, y));
 }

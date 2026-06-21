@@ -1,14 +1,14 @@
-###
-### This data and information is not to be used as the basis of manufacture,
-### or be reproduced or copied, or be distributed to another party, in whole
-### or in part, without the prior written consent of Lucent Technologies.
-###
-### (C) Copyright 1997 Lucent Technologies
-###
-### Written by N. W. Knauft
-###
 #
+# Copyright © 1997 Lucent Technologies Inc.
 # Revisions Copyright © 1998 Vita Nuova Limited.
+# Written by N. W. Knauft.
+#
+# Salvaged into InferNode from upstream inferno-os (appl/examples/minitel).
+# The original 1997 Lucent restrictive-use header has been removed: this code
+# is part of the Inferno distribution that Vita Nuova relicensed under the
+# permissive MIT licence. See docs/GPL-LICENSE-AUDIT.md for repository-wide
+# licensing status.
+#
 
 implement Keyboard;
 

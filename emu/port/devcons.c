@@ -108,10 +108,15 @@ kbdslave(void *a)
 		if(kbd.raw == 0){
 			switch(b){
 			case 0x15:
-				write(1, "^U\n", 3);
+				if(write(1, "^U\n", 3)){/*nothing*/}
+				break;
+			case '\b':
+			case 0x7f:
+				/* Erase character on terminal: backspace, space, backspace */
+				if(write(1, "\b \b", 3)){/*nothing*/}
 				break;
 			default:
-				write(1, &b, 1);
+				if(write(1, &b, 1)){/*nothing*/}
 				break;
 			}
 		}
@@ -346,8 +351,19 @@ consread(Chan *c, void *va, long n, vlong offset)
 			error(Enonexist);
 
 		while(!qcanread(lineq)) {
-			if(qread(kbdq, &ch, 1) == 0)
+			if(qread(kbdq, &ch, 1) == 0) {
+				if(qisclosed(kbdq)) {
+					if(kbd.x > 0) {
+						qwrite(lineq, kbd.line, kbd.x);
+						kbd.x = 0;
+						break;
+					}
+					qunlock(&kbd.q);
+					poperror();
+					return 0;
+				}
 				continue;
+			}
 			send = 0;
 			if(ch == 0){
 				/* flush output on rawoff -> rawon */
@@ -411,6 +427,8 @@ conswrite(Chan *c, void *va, long n, vlong offset)
 {
 	char buf[128], *a, ch;
 	int x;
+	int ret;
+
 
 	if(c->qid.type & QTDIR)
 		error(Eperm);
@@ -433,7 +451,8 @@ conswrite(Chan *c, void *va, long n, vlong offset)
 			}
 			runlock(&kprintq.l);
 		}
-		return write(1, va, n);
+		ret = write(1, va, n);
+		return ret;
 
 	case Qsysctl:
 		return sysconwrite(va, n);
@@ -451,6 +470,56 @@ conswrite(Chan *c, void *va, long n, vlong offset)
 				qwrite(kbdq, &ch, 1);
 			} else if(strncmp(buf, "rawoff", 6) == 0){
 				kbd.raw = 0;
+			} else if(strncmp(a, "kbd ontop", 9) == 0){
+				/* workspace text app focused — raise the keyboard but
+				 * keep the top pinned (don't slide the view up). */
+				setsoftkbd(2);
+			} else if(strncmp(a, "kbd on", 6) == 0){
+				/* GUI focused a bottom input (chat) — raise + slide. */
+				setsoftkbd(1);
+			} else if(strncmp(a, "kbd off", 7) == 0){
+				/* text field lost focus — hide the soft keyboard. */
+				setsoftkbd(0);
+			} else if(strncmp(a, "kbd rect", 8) == 0){
+				/* Focused-widget rect in Inferno screen pixels (the
+				 * backend maps them to window points; the GUI only
+				 * knows screen pixels):
+				 *   kbd rect <x> <y> <w> <h>
+				 * Replaces the hard-coded "top" / "bottom 56pt"
+				 * region in update_text_input_area, so SDL's
+				 * iOS keyboard avoidance slides the *real*
+				 * focused widget above the keyboard. The Limbo
+				 * helper is /dis/lib/softkbd (see appl/lib/softkbd.b).
+				 * Inline integer scan — Inferno port doesn't
+				 * pull in stdio so sscanf isn't available, and
+				 * atoi gives us no consumed-length back.
+				 * Bad/missing fields zero the rect, which
+				 * setsoftkbd_rect treats as "clear override". */
+				int vals[4] = {0, 0, 0, 0};
+				int got = 0;
+				char *p = a + 8;
+				while(got < 4){
+					int sign = 1, digit = 0, val = 0;
+					while(*p == ' ' || *p == '\t')
+						p++;
+					if(*p == '\0' || *p == '\n')
+						break;
+					if(*p == '-'){ sign = -1; p++; }
+					else if(*p == '+') p++;
+					while(*p >= '0' && *p <= '9'){
+						val = val * 10 + (*p - '0');
+						p++;
+						digit = 1;
+					}
+					if(!digit)
+						break;
+					vals[got++] = sign * val;
+				}
+				if(got == 4)
+					setsoftkbd_rect(vals[0], vals[1],
+							vals[2], vals[3]);
+				else
+					setsoftkbd_rect(0, 0, 0, 0);
 			}
 			if((a = strchr(a, ' ')) != nil)
 				a++;

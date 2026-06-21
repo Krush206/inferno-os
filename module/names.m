@@ -10,6 +10,4 @@ Names: module
 	pathname:	fn(els: list of string): string;
 	rooted:	fn(root: string, name: string): string;
 	relative:	fn(name: string, root: string): string;
-	absolute:	fn(p: string): int;
-	searchname:	fn(progname: string): string;
 };

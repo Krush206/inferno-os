@@ -2,8 +2,14 @@ implement Charon;
 
 include "common.m";
 include "debug.m";
-
+include "bufio.m";
+include "acmewin.m";
+include "factotum.m";
+	factotum: Factotum;
 sys: Sys;
+acmewin: Acmewin;
+Win: import acmewin;
+
 CU: CharonUtils;
 	ByteSource, MaskedImage, CImage, ImageCache, ReqInfo, Header, 
 	ResourceState, config, max, min, X: import CU;
@@ -57,7 +63,7 @@ DocConfig: adt {
 	title: string;
 	initconfig: int;			# true unless this is a frameset and some subframe changed
 	gospec: cyclic ref GoSpec;
-	# TODO: add current y pos and form field values
+	scrollpos: Point;		# saved scroll position for history restore
 
 	equal: fn(a: self ref DocConfig, b: ref DocConfig) : int;
 	equalarray: fn(a1: array of ref DocConfig, a2: array of ref DocConfig) : int;
@@ -114,6 +120,8 @@ warn := 0;
 dbgres := 0;
 doscripts := 0;
 
+BROWSER_DIR: con "/tmp/veltro/browser";
+
 top, curframe: ref Frame;
 mainwin: ref Image;
 p0 := Point(0,0);
@@ -147,6 +155,8 @@ init(ctxt: ref Draw->Context, argl: list of string)
 initc(ctxt: ref Context)
 {
 	sys = load Sys Sys->PATH;
+	initbrowserdir();
+
 	if (ctxt == nil)
 		fatalerror("bad args\n");
 	opener = ctxt.c;
@@ -217,12 +227,21 @@ initc(ctxt: ref Context)
 		newres.since(curres).print("difference after L->init (loaded Build, Lex)");
 		curres = newres;
 	}
-	(CU->imcache).init();
-	if(dbgres) {
-		newres = ResourceState.cur();
-		newres.since(curres).print("difference after (CU->imcache).init");
-		curres = newres;
+	if(!(CU->config).headless) {
+		(CU->imcache).init();
+		if(dbgres) {
+			newres = ResourceState.cur();
+			newres.since(curres).print("difference after (CU->imcache).init");
+			curres = newres;
+		}
 	}
+
+	# Render-to-file mode: layout page, write image+text, exit
+	if((CU->config).dorender) {
+		renderonce();
+		return;
+	}
+
 	start();
 	if(J != nil)
 		J->frametreechanged(top);
@@ -235,6 +254,7 @@ initc(ctxt: ref Context)
 	}
 	spawn plumbwatch();
 	spawn go(g);
+	spawn ctlproc();
 
 	sendopener("B");
 
@@ -261,12 +281,27 @@ Forloop:
 				curframe.yscroll(L->CAscrollpage, 1);
 			E->Khome =>
 				curframe.yscroll(L->CAscrollpage, -10000);
-			E->Kend => 
-				curframe.yscroll(L->CAscrollpage, 10000);	
+			E->Kend =>
+				curframe.yscroll(L->CAscrollpage, 10000);
 			E->Kaup =>
 				curframe.yscroll(L->CAscrollline, -1);
-			E->Kadown => 
-				curframe.yscroll(L->CAscrollline, 1);	
+			E->Kadown =>
+				curframe.yscroll(L->CAscrollline, 1);
+			E->Kpgup =>
+				curframe.yscroll(L->CAscrollpage, 1);
+			E->Kpgdown =>
+				curframe.yscroll(L->CAscrollpage, -1);
+			12 =>	# Ctrl-L: enter URL
+				G->startinput(G->MURL);
+			7 =>	# Ctrl-G: follow link by number
+				G->startinput(G->MLINK);
+			18 =>	# Ctrl-R: reload
+				g = GoSpec.newspecial(GoHistnode, history.find(0));
+			' ' =>
+				if(keyfocus == nil)
+					curframe.yscroll(L->CAscrollpage, -1);
+				else
+					handlekey(e);
 			* =>
 				handlekey(e);
 			}
@@ -284,9 +319,13 @@ Forloop:
 				stop();
 			g = nil;
 		Eback =>
-			g = GoSpec.newspecial(GoHistnode, history.find(-1));
+			hn := history.find(-1);
+			if(hn != nil)
+				g = GoSpec.newspecial(GoHistnode, hn);
 		Efwd =>
-			g = GoSpec.newspecial(GoHistnode, history.find(1));
+			hn := history.find(1);
+			if(hn != nil)
+				g = GoSpec.newspecial(GoHistnode, hn);
 		Eform =>
 			formaction(e.frameid, e.formid, e.ftype, 0);
 			g = nil;
@@ -329,6 +368,8 @@ Forloop:
 			f := findframe(top, e.frameid);
 			if (f != nil)
 				f.scrollrel(e.pt);
+			else
+				curframe.scrollrel(e.pt);
 			g = nil;
 		Esettext =>
 			f := findframe(top, e.frameid);
@@ -342,6 +383,11 @@ Forloop:
 				setfocus(popupctl.donepopup());
 			popupctl = nil;
 			grabctl = nil;
+		Efollow =>
+			fev := followlink(e.linknum);
+			if(fev != nil)
+				E->evchan <-= fev;
+			g = nil;
 		}
 
 		if (g == nil)
@@ -391,19 +437,19 @@ start()
 redraw(resized: int)
 {
 	im := mainwin;
+	if(im == nil)
+		return;
+	sth := G->statusbarheight();
 	if(resized) {
-#		top.r = im.r.inset(2*L->ReliefBd);
-		top.r = im.r;
+		top.r = Rect(im.r.min, Point(im.r.max.x, im.r.max.y - sth));
 		top.cim = mainwin;
 		top.reset();
-		(CU->imcache).resetlimits();
+		if(CU->imcache != nil)
+			(CU->imcache).resetlimits();
 	}
 	im.clipr = im.r;
-#	L->drawrelief(im, top.r.inset(-L->ReliefBd), L->ReliefRaised);
-#	L->drawrelief(im, top.r, L->ReliefSunk);
 	L->drawfill(im, top.r, CU->White);
 	G->flush(im.r);
-#	im.clipr = top.r;
 }
 
 # Return a Loc representing a control in the frame f
@@ -485,7 +531,7 @@ mainwinmouse(e: ref Event.Emouse) : (ref GoSpec, ref Control)
 		if(dbg > 1)
 			loc.print("mouse loc");
 		f := loc.lastframe();
-		hasscripts := f.doc.hasscripts;
+
 		if(e.mtype != E->Mmove)
 			curframe = f;
 		n1 := loc.n-1;
@@ -550,6 +596,24 @@ mainwinmouse(e: ref Event.Emouse) : (ref GoSpec, ref Control)
 			ctl = loc.le[n1].control;
 		}
 	}
+
+	# B2 click not on anchor: paste snarf as URL
+	if(g == nil && ctl == nil && e.mtype == E->Mmbuttonup) {
+		snarf := G->snarfget();
+		if(snarf != nil && snarf != "") {
+			# Strip whitespace
+			while(len snarf > 0 && (snarf[0] == ' ' || snarf[0] == '\t' || snarf[0] == '\n'))
+				snarf = snarf[1:];
+			while(len snarf > 0 && (snarf[len snarf - 1] == ' ' || snarf[len snarf - 1] == '\t' || snarf[len snarf - 1] == '\n'))
+				snarf = snarf[0:len snarf - 1];
+			if(len snarf > 0) {
+				url := CU->makeabsurl(snarf);
+				if(url != nil)
+					g = GoSpec.newget(GoNormal, url, "_top");
+			}
+		}
+	}
+
 	if (ctl != nil)
 		newgrab = ctlmouse(e, ctl, nil);
 	if(newgrab == nil && domouseout && doscripts) {
@@ -658,7 +722,11 @@ handlekey(e: ref Event.Ekey)
 						found = 1;
 						continue;
 					}
-					if (ff.ftype == B->Ftext || ff.ftype == B->Fpassword) {
+					if (ff.ftype == B->Ftext || ff.ftype == B->Fpassword
+				    || ff.ftype == B->Femail || ff.ftype == B->Furl
+				    || ff.ftype == B->Fnumber || ff.ftype == B->Ftel
+				    || ff.ftype == B->Fsearch || ff.ftype == B->Fdate
+				    || ff.ftype == B->Ftime) {
 						if (nextff == nil || found)
 							nextff = ff;
 						if (found)
@@ -697,7 +765,7 @@ goproc(g: ref GoSpec)
 {
 	origkind := g.kind;
 	hn : ref HistNode = nil;
-	doctext := "";
+
 	case origkind {
 	GoNormal or
 	GoReplace or
@@ -738,6 +806,9 @@ goproc(g: ref GoSpec)
 	G->progress <-= (-1, G->Pstart, 0, "");
 	err := "";
 	status := "Done";
+	writestatefile(BROWSER_DIR + "/status", "loading");
+	if(g.url != nil)
+		writestatefile(BROWSER_DIR + "/url", g.url.tostring());
 
 	if((origkind == GoNormal || origkind == GoReplace || origkind == GoLink) && g.url.frag != "" 
 			&& f.doc != nil && f.doc.src != nil && CU->urlequal(g.url, f.doc.src))
@@ -746,7 +817,11 @@ goproc(g: ref GoSpec)
 		if (g.kind == GoSettext)
 			settext(g, f, g.body);
 		else
-			err = get(g, f, origkind, hn);
+			sys->print("goproc: fetching url=%s\n", g.url.tostring());
+		t0 := sys->millisec();
+		err = get(g, f, origkind, hn);
+		t1 := sys->millisec();
+		sys->print("goproc: get() returned err=%q total=%dms\n", err, t1-t0);
 
 		if(doscripts && J->defaultStatus != "")
 			status = J->defaultStatus;
@@ -754,10 +829,18 @@ goproc(g: ref GoSpec)
 	if(err != nil) {
 		status = err;
 		G->progress <-= (-1, G->Perr, 100, err);
-	} else 
+	} else {
 		G->progress <-= (-1, G->Pdone, 0, nil);
-		
+		# Restore scroll position for back/forward navigation
+		if(origkind == GoHistnode && hn != nil) {
+			sp := hn.topconfig.scrollpos;
+			if(sp.x != 0 || sp.y != 0)
+				f.scrollabs(sp);
+		}
+	}
+
 	G->setstatus(status);
+	spawn writebrowserstate(err);
 	checkrefresh(f);
 }
 
@@ -836,7 +919,8 @@ get(g: ref GoSpec, f: ref Frame, origkind: int, hn: ref HistNode) : string
 {
 	curres, newres: ResourceState;
 	if(dbgres) {
-		(CU->imcache).clear();
+		if(CU->imcache != nil)
+			(CU->imcache).clear();
 		curres = ResourceState.cur();
 	}
 	sdest := g.url.tostring();
@@ -848,6 +932,7 @@ get(g: ref GoSpec, f: ref Frame, origkind: int, hn: ref HistNode) : string
 	realm := "";
 	auth := "";
 	error := "";
+	tnet0 := sys->millisec();
 	for(nredirs := 0; ; nredirs++) {
 		bsmain = CU->startreq(ri);
 		error = bsmain.err;
@@ -911,12 +996,17 @@ get(g: ref GoSpec, f: ref Frame, origkind: int, hn: ref HistNode) : string
 		newres.since(curres).print("resources to get header");
 		curres = newres;
 	}
+	tnet1 := sys->millisec();
+	sys->print("PERF: net(+redir) for %s = %dms\n", sdest, tnet1-tnet0);
 	if(hdr.mtype == CU->TextHtml || hdr.mtype == CU->TextPlain ||
-					I->supported(hdr.mtype)) {
+					(I != nil && I->supported(hdr.mtype))) {
 		G->seturl(sdest);
 		history.add(f, g, origkind);
 		resetkeyfocus(f);
-		srcdata := L->layout(f, bsmain, origkind == GoLink);
+		tlay0 := sys->millisec();
+		L->layout(f, bsmain, origkind == GoLink);
+		tlay1 := sys->millisec();
+		sys->print("PERF: layout for %s = %dms\n", sdest, tlay1-tlay0);
 		if (J != nil)
 			J->framedone(f, f.doc.hasscripts);
 		history.update(f);
@@ -1167,7 +1257,9 @@ form_submit(fr: ref Frame, frm: ref B->Form, p: Point, submitctl: ref Control, o
 		submitfield = submitctl.ff;
 
 	if(submitctl != nil && tagof(submitctl) == tagof(Control.Centry)) {
-		# Via CR, so only submit if there is a submit button (first one is the default)
+		# Via CR: use first submit button if present (for submit button value in POST).
+		# If no <input type="submit"> exists (e.g. form uses <button> which is unimplemented),
+		# submit anyway — modern browsers do this for single-input forms.
 		firstsubmit : ref B->Formfield;
 		for(l := frm.fields; l != nil; l = tl l) {
 			f := hd l;
@@ -1176,9 +1268,7 @@ form_submit(fr: ref Frame, frm: ref B->Form, p: Point, submitctl: ref Control, o
 				break;
 			}
 		}
-		if (firstsubmit == nil)
-			return;
-		submitfield = firstsubmit;
+		submitfield = firstsubmit;	# nil is ok — form submits without submit-button value
 	}
 	if(doscripts && fr.doc.hasscripts && onsubmit && (frm.evmask & E->SEonsubmit)) {
 		c := chan of string;
@@ -1199,7 +1289,9 @@ floop:
 		if(f.ctlid >= 0)
 			c = fr.controls[f.ctlid];
 		case f.ftype {
-			B->Ftext or B->Fpassword or B->Ftextarea =>
+			B->Ftext or B->Fpassword or B->Ftextarea
+			or B->Femail or B->Furl or B->Fnumber or B->Ftel
+			or B->Fsearch or B->Fdate or B->Ftime or B->Frange =>
 				if(c != nil)
 					pick e := c {
 					Centry =>
@@ -1392,9 +1484,9 @@ formfield_click(f: ref Frame, frm: ref B->Form, ff: ref B->Formfield)
 formfield_select(f: ref Frame, ff: ref B->Formfield)
 {
 	case ff.ftype {
-	B->Ftext or
-	B->Fselect or
-	B->Ftextarea =>
+	B->Ftext or B->Fselect or B->Ftextarea
+	or B->Femail or B->Furl or B->Fnumber or B->Ftel
+	or B->Fsearch or B->Fdate or B->Ftime or B->Frange =>
 		ctl := f.controls[ff.ctlid];
 		pick c := ctl {
 		Centry =>
@@ -1639,7 +1731,10 @@ History.add(h: self ref History, f: ref Frame, g: ref GoSpec, navkind: int)
 	oldcur : ref HistNode;
 	if(h.n > 0)
 		oldcur = h.h[h.n-1];
-	dc := ref DocConfig(f.name, g.url.tostring(), navkind != GoHistnode, g);
+	# Save scroll position of previous page before navigating away
+	if(h.n > 0 && top != nil)
+		h.h[h.n-1].topconfig.scrollpos = top.viewr.min;
+	dc := ref DocConfig(f.name, g.url.tostring(), navkind != GoHistnode, g, Point(0, 0));
 	hnode := ref HistNode(dc, nil, nil, nil, -1, nil);
 	if(f == top) {
 		g.target = "_top";
@@ -1711,7 +1806,7 @@ History.update(h: self ref History, f: ref Frame)
 			for(l := f.kids; l != nil; l = tl l) {
 				kf := hd l;
 				if(kf.src != nil)
-					kc[i] = ref DocConfig(kf.name, kf.src.tostring(), 1,  GoSpec.newget(GoNormal, kf.src, "_self"));
+					kc[i] = ref DocConfig(kf.name, kf.src.tostring(), 1, GoSpec.newget(GoNormal, kf.src, "_self"), Point(0, 0));
 				i++;
 			}
 			hnode.kidconfigs = kc;
@@ -1833,7 +1928,7 @@ histinfo() : (int, string, string, string)
 isurlsubstring(hn: ref HistNode, s: string) : int
 {
 	url := hn.topconfig.gospec.url.tostring();
-	(l, r) := S->splitstrl(url, s);
+	(nil, r) := S->splitstrl(url, s);
 	if(r != nil)
 		return 1;
 	return 0;
@@ -1942,11 +2037,19 @@ getauth(chal: string) : (string, string)
 		if(realm == a.realm)
 			return (realm, a.credentials);
 	}
-	
-	c := chan of (int, string);
-	(code, uname, pword) := G->auth(realm);
-	if(code != 1)
-		return (nil, nil);
+	uname, pword: string;
+	if((CU->config).doacme){
+		if(factotum == nil){
+			factotum = load Factotum Factotum->PATH;
+			factotum->init();
+		}
+		(uname, pword) = factotum->getuserpasswd(sys->sprint("proto=pass service=http realm=%s", realm));
+	}else{
+		code: int;
+		(code, uname, pword) = G->auth(realm);
+		if(code != 1)
+			return (nil, nil);
+	}
 	cred := uname + ":" + pword;
 	cred = tobase64(cred);
 	return (realm, cred);
@@ -2107,16 +2210,93 @@ startcharon(url: string, c: chan of string)
 	}
 }
 
+# ---------- Render-to-file mode ----------
+
+RENDERIMG: con "/tmp/.charonrender.bit";
+RENDERTXT: con "/tmp/.charonrender.txt";
+
+renderonce()
+{
+	start();
+
+	startpage := config.starturl;
+	url := CU->makeabsurl(startpage);
+	if(url == nil) {
+		sendopener("E");
+		return;
+	}
+
+	f := top;
+	curframe = f;
+	g := GoSpec.newget(GoNormal, url, "_top");
+
+	# Start network communication loop in background
+	gopgrp = sys->pctl(sys->NEWPGRP, nil);
+	spawn rendernetget();
+
+	# Fetch and layout synchronously
+	G->progress <-= (-1, G->Pstart, 0, "");
+	get(g, f, GoNormal, nil);
+	G->progress <-= (-1, G->Pdone, 0, "");
+
+	# Write rendered image
+	if(f != nil && f.cim != nil && f.layout != nil) {
+		w := f.layout.width;
+		h := f.layout.height;
+		if(w <= 0) w = 1;
+		if(h <= 0) h = 1;
+		# Clamp to frame content rect
+		if(w > f.cr.dx()) w = f.cr.dx();
+		if(h > f.cr.dy()) h = f.cr.dy();
+		origin := Point(f.cr.min.x, f.cr.min.y);
+		ifd := sys->create(RENDERIMG, Sys->OWRITE, 8r600);
+		if(ifd != nil) {
+			crop := context.display.newimage(
+				Rect(Point(0,0), Point(w, h)),
+				f.cim.chans, 0, D->White);
+			if(crop != nil) {
+				crop.draw(crop.r, f.cim, nil, origin);
+				context.display.writeimage(ifd, crop);
+			}
+			ifd = nil;
+		}
+	}
+
+	# Write extracted text
+	text := extractbody(f);
+	tfd := sys->create(RENDERTXT, Sys->OWRITE, 8r600);
+	if(tfd != nil) {
+		b := array of byte text;
+		sys->write(tfd, b, len b);
+		tfd = nil;
+	}
+
+	sendopener("D");
+	finish();
+}
+
+rendernetget()
+{
+	CU->netget();
+}
+
+exiting := 0;
 # Kill all processes spawned by us, and exit
 finish()
 {
+	if(plumb != nil){
+		# very round about way of making sure we shutdown from plumber
+		# plumbwatch() checks if we're exiting
+		exiting = 1;
+		msg := ref Msg((CU->config).plumbport, "web", "", "text", "", array of byte "http://plan9.bell-labs.com");
+		msg.send();
+		plumb->shutdown();
+	}
 	if (CU != nil) {
 		CU->kill(pgrp, 1);
 		if(gopgrp != 0)
 			CU->kill(gopgrp, 1);
 	}
-	if(plumb != nil)
-		plumb->shutdown();
 	sendopener("E");
 	exit;
 }
@@ -2137,10 +2317,24 @@ plumbwatch()
 		return;
 	}
 	while ((m := Msg.recv()) != nil) {
+		if(exiting)
+			return;
+		sys->print("plumb recv\n");
 		if (m.kind == "text") {
 			u := CU->makeabsurl(string m.data);
 			if (u != nil)
 				E->evchan <-= ref Event.Ego(u.tostring(), "_top", 0, E->EGnormal);
+		}else if(m.kind == "anchor"){
+			anchorid := int string m.data;
+			a : ref Build->Anchor = nil;
+			for(al := top.doc.anchors; al != nil; al = tl al) {
+				a = hd al;
+				if(a.index == anchorid)
+					break;
+			}
+			if (al == nil)
+				return;
+			E->evchan <-= ref Event.Ego(a.href.tostring(), "_top", 0, E->EGnormal);
 		}
 	}
 }
@@ -2169,3 +2363,609 @@ gettop(): ref Layout->Frame
 {
 	return top;
 }
+
+# ---------- Filesystem Interface ----------
+
+initbrowserdir()
+{
+	mkdirq("/tmp");
+	mkdirq("/tmp/veltro");
+	mkdirq(BROWSER_DIR);
+	writestatefile(BROWSER_DIR + "/url", "");
+	writestatefile(BROWSER_DIR + "/title", "");
+	writestatefile(BROWSER_DIR + "/body", "");
+	writestatefile(BROWSER_DIR + "/links", "");
+	writestatefile(BROWSER_DIR + "/status", "ready");
+	writestatefile(BROWSER_DIR + "/forms", "");
+	writestatefile(BROWSER_DIR + "/ctl", "");
+}
+
+mkdirq(path: string)
+{
+	fd := sys->open(path, Sys->OREAD);
+	if(fd != nil) {
+		fd = nil;
+		return;
+	}
+	fd = sys->create(path, Sys->OREAD, Sys->DMDIR | 8r700);
+	fd = nil;
+}
+
+writestatefile(path, data: string)
+{
+	fd := sys->create(path, Sys->OWRITE, 8r600);
+	if(fd == nil)
+		return;
+	b := array of byte data;
+	sys->write(fd, b, len b);
+	fd = nil;
+}
+
+readctlfile(path: string): string
+{
+	fd := sys->open(path, Sys->ORDWR);
+	if(fd == nil)
+		return nil;
+	buf := array[4096] of byte;
+	n := sys->read(fd, buf, len buf);
+	if(n <= 0) {
+		fd = nil;
+		return nil;
+	}
+	s := string buf[0:n];
+	tfd := sys->create(path, Sys->OWRITE, 8r600);
+	tfd = nil;
+	fd = nil;
+	return browserstrip(s);
+}
+
+browserstrip(s: string): string
+{
+	i := 0;
+	while(i < len s && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r'))
+		i++;
+	j := len s;
+	while(j > i && (s[j-1] == ' ' || s[j-1] == '\t' || s[j-1] == '\n' || s[j-1] == '\r'))
+		j--;
+	if(i >= j)
+		return "";
+	return s[i:j];
+}
+
+browsersplitfirst(s: string): (string, string)
+{
+	s = browserstrip(s);
+	for(i := 0; i < len s; i++) {
+		if(s[i] == ' ' || s[i] == '\t')
+			return (s[0:i], browserstrip(s[i:]));
+	}
+	return (s, "");
+}
+
+browsertolower(s: string): string
+{
+	result := "";
+	for(i := 0; i < len s; i++) {
+		c := s[i];
+		if(c >= 'A' && c <= 'Z')
+			c += 'a' - 'A';
+		result[len result] = c;
+	}
+	return result;
+}
+
+browseratoi(s: string): int
+{
+	s = browserstrip(s);
+	n := 0;
+	for(i := 0; i < len s; i++) {
+		c := s[i];
+		if(c < '0' || c > '9')
+			break;
+		n = n * 10 + (c - '0');
+	}
+	return n;
+}
+
+followlink(n: int): ref Event
+{
+	if(top == nil || top.doc == nil)
+		return nil;
+	idx := 0;
+	for(al := top.doc.anchors; al != nil; al = tl al) {
+		a := hd al;
+		if(a.href == nil)
+			continue;
+		idx++;
+		if(idx == n) {
+			href := a.href.tostring();
+			url := CU->makeabsurl(href);
+			if(url == nil)
+				return nil;
+			return ref Event.Ego(href, "_top", 0, E->EGnormal);
+		}
+	}
+	return nil;
+}
+
+ctlproc()
+{
+	sys->pctl(Sys->NEWPGRP, nil);
+	for(;;) {
+		sys->sleep(200);
+		cmd := readctlfile(BROWSER_DIR + "/ctl");
+		if(cmd == nil || cmd == "")
+			continue;
+		(verb, rest) := browsersplitfirst(cmd);
+		verb = browsertolower(verb);
+		ev: ref Event = nil;
+		case verb {
+		"navigate" or "go" =>
+			rest = browserstrip(rest);
+			if(rest != "") {
+				url := CU->makeabsurl(rest);
+				if(url != nil)
+					ev = ref Event.Ego(rest, "_top", 0, E->EGnormal);
+			}
+		"back" =>
+			ev = ref Event.Eback(0);
+		"forward" or "fwd" =>
+			ev = ref Event.Efwd(0);
+		"reload" =>
+			ev = ref Event.Ego("", "_top", 0, E->EGreload);
+		"stop" =>
+			ev = ref Event.Estop(0);
+		"follow" =>
+			n := browseratoi(rest);
+			if(n > 0)
+				ev = followlink(n);
+		}
+		if(ev != nil)
+			E->evchan <-= ev;
+	}
+}
+
+writebrowserstate(err: string)
+{
+	sys->pctl(Sys->NEWPGRP, nil);
+	f := top;
+	if(f == nil) {
+		writestatefile(BROWSER_DIR + "/status", "ready");
+		return;
+	}
+
+	url := "";
+	title := "";
+	if(f.doc != nil) {
+		if(f.doc.src != nil)
+			url = f.doc.src.tostring();
+		title = f.doc.doctitle;
+	}
+	writestatefile(BROWSER_DIR + "/url", url);
+	writestatefile(BROWSER_DIR + "/title", title);
+
+	status := "ready";
+	if(err != nil && err != "")
+		status = "error: " + err;
+	writestatefile(BROWSER_DIR + "/status", status);
+
+	body := extractbody(f);
+	writestatefile(BROWSER_DIR + "/body", body);
+
+	links := extractlinks(f);
+	writestatefile(BROWSER_DIR + "/links", links);
+
+	# Update link count for statusbar display
+	nlnk := 0;
+	if(f.doc != nil) {
+		for(al := f.doc.anchors; al != nil; al = tl al) {
+			a := hd al;
+			if(a.href != nil)
+				nlnk++;
+		}
+	}
+	G->linkcount = nlnk;
+
+	writestatefile(BROWSER_DIR + "/forms", "");
+}
+
+extractbody(f: ref Frame): string
+{
+	if(f == nil || f.layout == nil)
+		return "";
+	return extractlay(f, f.layout);
+}
+
+extractlay(f: ref Frame, lay: ref L->Lay): string
+{
+	if(lay == nil)
+		return "";
+	s := "";
+	for(l := lay.start; l != nil; l = l.next)
+		s += extractitems(f, l.items);
+	return s;
+}
+
+extractitems(f: ref Frame, it: ref Item): string
+{
+	s := "";
+	for(k := it; k != nil; k = k.next) {
+		pick a := k {
+		Itext =>
+			if(a.state & Build->IFbrksp)
+				s += "\n";
+			s += a.s;
+			if(k.anchorid > 0)
+				s += i2suf(k.anchorid);
+		Irule =>
+			s += "\n-------------\n";
+		Iimage =>
+			s += " [img: " + a.altrep + "] ";
+			if(k.anchorid > 0)
+				s += i2suf(k.anchorid);
+		Iformfield =>
+			ff := a.formfield;
+			if(ff != nil && ff.ftype != Build->Fhidden)
+				s += " [" + ff.value + "] ";
+		Itable =>
+			tab := a.table;
+			if(f.sublays != nil) {
+				for(cl := tab.cells; cl != nil; cl = tl cl) {
+					layid := (hd cl).layid;
+					if(layid >= 0 && layid < len f.sublays)
+						s += extractlay(f, f.sublays[layid]);
+				}
+			}
+		Ifloat =>
+			s += extractitems(f, a.item);
+		Ispacer =>
+			s += " ";
+		}
+	}
+	s += "\n";
+	return s;
+}
+
+extractlinks(f: ref Frame): string
+{
+	if(f == nil || f.doc == nil)
+		return "";
+	s := "";
+	idx := 0;
+	for(al := f.doc.anchors; al != nil; al = tl al) {
+		a := hd al;
+		if(a.href == nil)
+			continue;
+		idx++;
+		label := findanchortext(f, a.index);
+		s += sys->sprint("%d %s %s\n", idx, a.href.tostring(), label);
+	}
+	return s;
+}
+
+findanchortext(f: ref Frame, anchorid: int): string
+{
+	if(f == nil || f.layout == nil)
+		return "";
+	s := "";
+	for(l := f.layout.start; l != nil; l = l.next)
+		s += collectanchortext(l.items, anchorid);
+	return browserstrip(s);
+}
+
+
+collectanchortext(it: ref Item, anchorid: int): string
+{
+	s := "";
+	for(k := it; k != nil; k = k.next) {
+		if(k.anchorid != anchorid)
+			continue;
+		pick a := k {
+		Itext =>
+			s += a.s;
+		Iimage =>
+			if(a.altrep != "")
+				s += a.altrep;
+		* =>
+			;
+		}
+	}
+	return s;
+}
+
+# ---------- End Filesystem Interface ----------
+
+sync: chan of int;
+pid: int;
+acmecons: ref Sys->FD;
+
+dumptext()
+{
+	sys->pctl(Sys->NEWPGRP, nil);
+	if(!(CU->config).doacme)
+		return;
+	if(acmewin == nil){
+		acmewin = load Acmewin Acmewin->PATH;
+		acmewin->init();
+	}
+	if(pid == 0){
+		w := Win.wnew();
+		sync = chan of int;
+		spawn awin(w, sync);
+		pid =<-sync;
+	}
+	sync<-=1;
+}
+
+dumplay(w: ref Acmewin->Win, lay: ref L->Lay)
+{
+	for (l := lay.start; l != nil; l = l.next){
+		dumpitems(w, l.items);
+	}
+}
+
+dumpitems(w: ref Acmewin->Win, it: ref Item)
+{
+	for(k :=it; k != nil; k = k.next) {
+		pick a := k{
+		Itext =>
+			if(a.state & Build->IFbrksp)
+				w.wwritebody("\n");
+			w.wwritebody(a.s);
+			if(k.anchorid > 0)
+				w.wwritebody(i2suf(k.anchorid));
+		Irule =>
+			w.wwritebody("-------------\n");
+		Iimage =>
+			w.wwritebody(" † " + a.altrep +  +" "); # +a.ci.src.tostring()
+			if(k.anchorid > 0)
+				w.wwritebody(i2suf(k.anchorid));
+		Iformfield =>
+			dumpff(w, a.formfield);
+		#	w.wwritebody(" [FORM] ");
+		Itable =>
+			tab := a.table;
+			for(cl := tab.cells; cl != nil; cl = tl cl)
+				dumplay(w, top.sublays[(hd cl).layid]);
+		Ifloat =>
+			dumpitems(w, a.item);
+		Ispacer =>
+			w.wwritebody(" ");
+		}
+	}
+	w.wwritebody("\n");
+}
+
+dumpff(w: ref Acmewin->Win, ff: ref Build->Formfield)
+{
+	ffields := array[] of {"Entry", "Password", "Checkbox", "Radio", "Submit", "Hidden", "Image",
+		"Reset", "File", "Button", "Select", "Textarea"};
+	if(ff.ftype != Build->Fhidden){
+		s := "[" + ffields[ff.ftype] + sys->sprint(" %d %s", ff.ctlid, ff.value) + "]";
+		w.wwritebody(s);
+	}
+}
+
+
+i2suf(d: int): string
+{
+	suf := "₀₁₂₃₄₅₆₇₈₉";
+	s := sys->sprint("%d", d);
+	for(i:=0;i<len s;i++)
+		s[i] = suf[s[i] - '0'];
+	return s;
+}
+
+awin(w: ref Win, sync: chan of int)
+{
+	c := chan of Acmewin->Event;
+	na: int;
+	ea: Acmewin->Event;
+	s: string;
+
+	sync <-= sys->pctl(0, nil);;
+	w.ctlwrite("clean");
+	w.wtagwrite("Url Back Fwd");
+	if(acmecons == nil)
+		acmecons = sys->open("/mnt/acme/cons", Sys->OWRITE);
+	spawn w.wslave(c);
+	loop: for(;;){
+		alt {
+		<- sync =>
+			doexec(w, "Get");
+		e := <- c =>
+			if(e.c1 != 'M')
+				continue;
+			case e.c2 {
+			'x' or 'X' =>
+				eq := e;
+				if(e.flag & 2)
+					eq =<- c;
+				if(e.flag & 8){
+					ea =<- c; 
+					na = ea.nb;
+					<- c; #toss
+				}else
+					na = 0;
+				if(eq.q1>eq.q0 && eq.nb==0)
+					s = w.wread(eq.q0, eq.q1);
+				else
+					s = string eq.b[0:eq.nb];
+				if(na)
+					s +=  " " + string ea.b[0:ea.nb];
+				n := doexec(w, s);
+				if(n == 0)
+					w.wwriteevent(ref e);
+				else if(n < 0)
+					break loop;
+			'l' or 'L' =>
+				eq := e;
+				if(e.flag & 2)
+					eq =<-c;
+				s = string eq.b[0:eq.nb];
+				if(eq.q1>eq.q0 && eq.nb==0)
+					s = w.wread(eq.q0, eq.q1);
+				nopen := 0;
+				do{
+					(n, t) := strtoi(s);
+					if(n>0 && (t == len s || s[t]==' ' || s[t]=='\t' || s[t]=='\n')){
+						anchorid := n;
+						a : ref Build->Anchor = nil;
+						for(al := top.doc.anchors; al != nil; al = tl al) {
+							a = hd al;
+							if(a.index == anchorid)
+								break;
+						}
+						if (al == nil)
+							continue;
+						E->evchan <-= ref Event.Ego(a.href.tostring(), "_top", 0, E->EGnormal);
+						nopen++;
+						s = s[t:];
+					}
+					while(s != nil && ! (s[t] >= '₀' && s[t] <= '₉'))
+						s = s[1:];
+				}while(s != nil);
+				if(nopen == 0)	# send it back 
+					w.wwriteevent(ref e);
+			}
+		}
+	}
+	w.wdel(1);
+	pid = 0;
+	postnote(1, sys->pctl(0, nil), "kill");
+}
+
+PNPROC, PNGROUP : con iota;
+
+postnote(t : int, pid : int, note : string) : int
+{
+	fd := sys->open("#p/" + string pid + "/ctl", Sys->OWRITE);
+	if (fd == nil)
+		return -1;
+	if (t == PNGROUP)
+		note += "grp";
+	sys->fprint(fd, "%s", note);
+	fd = nil;
+	return 0;
+}
+
+strtoi(s : string) : (int, int)
+{
+	m := 0;
+	neg := 0;
+	t := 0;
+	ls := len s;
+	while (t < ls && (s[t] == ' ' || s[t] == '\t'))
+		t++;
+	if (t < ls && s[t] == '+')
+		t++;
+	else if (t < ls && s[t] == '-') {
+		neg = 1;
+		t++;
+	}
+	while (t < ls && (s[t] >= '₀' && s[t] <= '₉')) {
+		m = 10*m + s[t]-'₀';
+		t++;
+	}
+	if (neg)
+		m = -m;
+	return (m, t);	
+}
+
+doexec(w: ref Win, cmd: string): int
+{
+	(nil, f) := sys->tokenize(cmd, " \t\r\n");
+	case hd f {
+	"Get" =>
+		lay := top.layout;
+		title := top.doc.doctitle;
+		for(i:=0;i<len title;i++)
+			if(title[i] == ' ' || title[i] == '|')
+				title[i] = '_';
+		w.wname("/charon/" + title);
+		w.wreplace(",", "");
+		dumplay(w, lay);
+		w.wclean();
+	"Back" =>
+		E->evchan <-= ref Event.Eback(0);
+	"Fwd" =>
+		E->evchan <-= ref Event.Efwd(0);
+	"Del" or "Delete" =>
+		E->evchan <-= ref Event.Equit(0);
+		return -1;
+	"Entry" =>
+		f = tl f;
+		ctlid := -1;
+		if(f != nil)
+			ctlid = int hd  f;
+		if(ctlid >= top.controlid || ctlid < 0)
+			return 0;
+		c := top.controls[ctlid];
+		pick ce := c {
+		Centry =>
+			ce.s = "";
+			pad := "";
+			for(f = tl f; f != nil; f = tl f){
+				ce.s += pad + hd f;
+				pad = " ";
+			}
+#			if(c.ff != nil)
+#				spawn form_submit(c.f, c.ff.form, p0, c, 1);
+		}
+	"Password" =>
+		f = tl f;
+		ctlid := -1;
+		if(f != nil)
+			ctlid = int hd  f;
+		if(ctlid >= top.controlid || ctlid < 0)
+			return 0;
+		c := top.controls[ctlid];
+		pick ce := c {
+		Centry =>
+			ce.s = hd tl tl f;
+		}
+	"Submit" =>
+		f = tl f;
+		ctlid := -1;
+		if(f != nil)
+			ctlid = int hd  f;
+		if(ctlid >= top.controlid || ctlid < 0)
+			return 0;
+		c := top.controls[ctlid];
+		if(c.ff != nil)
+			spawn form_submit(c.f, c.ff.form, p0, c, 1);
+	"Url" =>
+		f = tl f;
+		if(f != nil){
+			s := cmd;
+			do{
+				(n, t) := strtoi(s);
+				if(n>0 && (t == len s || s[t]==' ' || s[t]=='\t' || s[t]=='\n')){
+					for(al := top.doc.anchors; al != nil; al = tl al) {
+						a := hd al;
+						if(a.index == n) {
+							sys->fprint(acmecons, "%s\n", a.href.tostring());
+							break;
+						}
+					}
+					s = s[t:];
+				}
+				while(s != nil && ! (s[t] >= '₀' && s[t] <= '₉'))
+					s = s[1:];
+			}while(s != nil);
+		}else
+			sys->fprint(acmecons, "%s\n", top.doc.src.tostring());
+	* =>
+		return 0;
+	}
+	return 1;
+}
+
+skip(s, cmd: string): string
+{
+	s = s[len cmd:];
+	while(s != nil && (s[0] == ' ' || s[0] == '\t' || s[0] == '\n'))
+		s = s[1:];
+	return s;
+}
+

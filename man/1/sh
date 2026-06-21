@@ -13,7 +13,7 @@ sh, builtin, exit, load, loaded, local, whatis, quote, run, set, unload, unquote
 .I file
 [
 .I arg ...
-]]
+]
 .SH DESCRIPTION
 .I Sh
 is a programmable user level interface (a shell) for Inferno.
@@ -23,7 +23,7 @@ flag, from
 .IR sh 's
 argument list. It can also be used to give programmable functionality
 to Limbo modules (see
-.IR sh (2)).
+.IR sh "" "" (2)).
 .SS Command Lines
 A command line is a sequence of commands, separated by ampersands or semicolons
 .RB ( &
@@ -96,7 +96,7 @@ A Dis module will be executed only if it
 implements the
 .B Command
 interface (see
-.IR command (2));
+.IR sh (1));
 a script file will be executed only if it
 starts with the characters
 .RB `` #! ''
@@ -922,7 +922,8 @@ This option implies
 .B -l
 If
 .B -l
-is given
+is given or the first character of argument zero is
+.BR - ,
 .I sh
 reads commands from
 .BR /lib/sh/profile ,
